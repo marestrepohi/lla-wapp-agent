@@ -1,0 +1,9 @@
+.env
+.env.*
+env.example.json
+.aws-sam/
+__pycache__/
+*.py[cod]
+*.sqlite*
+chroma/
+data/

@@ -2,7 +2,8 @@
 
 Functional, channel-independent prototype for debt-management conversations. The local CLI,
 Chainlit, Telegram, and WhatsApp webhook send normalized events through one LangGraph runtime.
-The Meta webhook can run locally behind ngrok; AWS deployment remains future work.
+The Meta webhook can run locally behind ngrok. The separate `aws-demo/` folder shows the AWS ingress
+and queue architecture; it does not migrate or deploy this local business runtime.
 
 The prototype deliberately keeps financial authority in a billing tool backed by SQLite. Its
 offline scenario demo uses a fake chat model and requires no Groq, vector database, AWS, or
@@ -40,6 +41,7 @@ demo/           Offline executable conversation demo
 tests/          Focused tool and decision tests
 docs/           AWS architecture and assessment traceability
 langchain-agent/ Optional Groq agent, web RAG pipeline, and Chainlit interface
+aws-demo/       FastAPI/Mangum Docker image and SAM sketch for API Gateway → SQS → Lambda
 ```
 
 ## Telegram demo adapter
@@ -67,6 +69,15 @@ checkpointer open; each channel supplies a normalized event. The UI displays web
 chunking, local embeddings, shared Chroma indexing, retrieval, source URLs, and tool outcomes.
 Financial actions use the SQLite mock; a promise is written only after explicit confirmation.
 
+## AWS architecture demo
+
+[`aws-demo/README.md`](aws-demo/README.md) shows the AWS-native ingress path using a Lambda container
+image, API Gateway, SQS FIFO/DLQ, and a queue-triggered Lambda worker. The worker is intentionally a
+stub: it does not run the existing LangGraph agent or access billing records. The architecture
+document also maps the future AWS services for Bedrock, Aurora, AgentCore Memory, Knowledge Bases,
+S3 Vectors, and Transcribe. Building/validating locally does not create AWS resources; deploying the
+SAM template does.
+
 ## Conversation examples
 
 The agent requires a validated client identity before disclosing a balance. In the demo, the
@@ -90,8 +101,9 @@ channel, conversation, and selected client.
 - `LLA_DB_PATH` controls the SQLite file (default: `./data/collections.sqlite3`).
 - No secrets are hardcoded. Telegram requires `TELEGRAM_BOT_TOKEN` only for that adapter.
 - Local mock data is not production financial data.
-- The prototype has no real payment gateway, CRM, identity provider, campaign scheduler, or AWS
-  deployment. The local WhatsApp webhook uses the three AVA variables plus the existing Groq key;
+- The prototype has no real payment gateway, CRM, identity provider, or campaign scheduler. The
+  AWS-only architecture demo is separate and has not been deployed. The local WhatsApp webhook uses
+  the three AVA variables plus the existing Groq key;
   it can receive text, audio, and images through ngrok, but inbound POST signatures are not
   validated. The LangChain/Groq inference is for local demonstration with mock customer data.
 - The SQLite repository demonstrates interfaces and idempotency concepts; production must use
@@ -102,5 +114,6 @@ channel, conversation, and selected client.
 
 - [`docs/architecture.md`](docs/architecture.md): 100% AWS production design, controls, risks,
   operations, and assumptions.
+- [`docs/superpowers/specs/2026-11-03-aws-architecture-demo-design.md`](docs/superpowers/specs/2026-11-03-aws-architecture-demo-design.md): scope and diagram for the AWS-only architecture demo.
 - [`docs/assessment-compliance.md`](docs/assessment-compliance.md): requirement-by-requirement
   mapping and explicit simulations.

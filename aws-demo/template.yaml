@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Architecture demo for WhatsApp ingress using API Gateway, Lambda container images,
+  and SQS FIFO. It does not deploy the billing agent or its target data/AI services.
+
+Parameters:
+  WhatsAppWebhookSecretArn:
+    Type: String
+    Description: Existing Secrets Manager JSON secret with app_secret and verify_token fields.
+
+Resources:
+  WhatsAppHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+
+  InboundDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+
+  InboundMessageQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+      VisibilityTimeout: 360
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InboundDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  WebhookIngressFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command:
+          - aws_demo.webhook.handler
+      FunctionName: !Sub "${AWS::StackName}-whatsapp-ingress"
+      MemorySize: 512
+      Timeout: 10
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref InboundMessageQueue
+          WHATSAPP_SECRET_ARN: !Ref WhatsAppWebhookSecretArn
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt InboundMessageQueue.Arn
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref WhatsAppWebhookSecretArn
+      Events:
+        Webhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WhatsAppHttpApi
+            Path: /webhook
+            Method: ANY
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WhatsAppHttpApi
+            Path: /health
+            Method: GET
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: .
+      DockerTag: webhook-demo
+
+  QueueWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command:
+          - aws_demo.worker.handler
+      FunctionName: !Sub "${AWS::StackName}-queue-worker"
+      MemorySize: 1024
+      Timeout: 60
+      ReservedConcurrentExecutions: 2
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:ChangeMessageVisibility
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt InboundMessageQueue.Arn
+      Events:
+        InboundMessages:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt InboundMessageQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: .
+      DockerTag: worker-demo
+
+  WebhookIngressLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-whatsapp-ingress"
+      RetentionInDays: 7
+
+  QueueWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-queue-worker"
+      RetentionInDays: 7
+
+Outputs:
+  WebhookCallbackUrl:
+    Description: Callback URL for Meta WhatsApp webhooks
+    Value: !Sub "https://${WhatsAppHttpApi}.execute-api.${AWS::Region}.amazonaws.com/webhook"
+  HealthUrl:
+    Description: Health endpoint for the architecture demo
+    Value: !Sub "https://${WhatsAppHttpApi}.execute-api.${AWS::Region}.amazonaws.com/health"
+  InboundQueueArn:
+    Description: SQS FIFO queue consumed by the demonstration worker
+    Value: !GetAtt InboundMessageQueue.Arn

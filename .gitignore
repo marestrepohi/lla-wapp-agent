@@ -228,6 +228,8 @@ data/collections.sqlite3
 
 # Local deployment worktrees
 .worktrees/
+.aws-sam/
+samconfig.toml
 
 # Chainlit-generated local configuration and translations
 .chainlit/

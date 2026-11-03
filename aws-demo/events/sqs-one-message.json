@@ -1,0 +1,8 @@
+{
+  "Records": [
+    {
+      "messageId": "demo-sqs-message-id",
+      "body": "{\"message_id\":\"demo-whatsapp-message-id\",\"sender_id\":\"15550000000\",\"message\":{\"type\":\"text\",\"text\":{\"body\":\"Hola\"}}}"
+    }
+  ]
+}
