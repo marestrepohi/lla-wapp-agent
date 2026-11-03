@@ -218,3 +218,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local SQLite mock data
+data/collections.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Local deployment worktrees
+.worktrees/
+
+# Chainlit-generated local configuration and translations
+.chainlit/
+.files/
+.superpowers/
