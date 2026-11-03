@@ -10,9 +10,11 @@ import logging
 import os
 from collections.abc import Iterator
 from functools import lru_cache
+from itertools import batched
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
@@ -23,8 +25,13 @@ _SECRET_ARN = os.getenv("WHATSAPP_SECRET_ARN", "").strip()
 _LOCAL_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "").strip()
 _LOCAL_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "").strip()
 _QUEUE_URL = os.getenv("SQS_QUEUE_URL", "").strip()
-_SQS = boto3.client("sqs")
-_SECRETS = boto3.client("secretsmanager")
+_AWS_CLIENT_CONFIG = Config(
+    connect_timeout=2,
+    read_timeout=3,
+    retries={"mode": "standard", "total_max_attempts": 2},
+)
+_SQS = boto3.client("sqs", config=_AWS_CLIENT_CONFIG)
+_SECRETS = boto3.client("secretsmanager", config=_AWS_CLIENT_CONFIG)
 
 app = FastAPI(title="LLA AWS architecture demo")
 
@@ -147,21 +154,34 @@ async def receive_webhook(request: Request) -> dict[str, int | bool]:
     if not _QUEUE_URL:
         raise HTTPException(status_code=503, detail="SQS queue is not configured")
 
-    try:
-        for sender, message_id, message in messages:
-            group_id, deduplication_id = _queue_ids(sender, message_id)
-            envelope = {
-                "message_id": message_id,
-                "sender_id": sender,
-                "message": message,
+    entries = []
+    for index, (sender, message_id, message) in enumerate(messages):
+        group_id, deduplication_id = _queue_ids(sender, message_id)
+        envelope = {
+            "message_id": message_id,
+            "sender_id": sender,
+            "message": message,
+        }
+        entries.append(
+            {
+                "Id": f"message-{index}",
+                "MessageBody": json.dumps(envelope, ensure_ascii=False),
+                "MessageGroupId": group_id,
+                "MessageDeduplicationId": deduplication_id,
             }
-            await asyncio.to_thread(
-                _SQS.send_message,
+        )
+
+    try:
+        for batch in batched(entries, 10):
+            response = await asyncio.to_thread(
+                _SQS.send_message_batch,
                 QueueUrl=_QUEUE_URL,
-                MessageBody=json.dumps(envelope, ensure_ascii=False),
-                MessageGroupId=group_id,
-                MessageDeduplicationId=deduplication_id,
+                Entries=list(batch),
             )
+            failures = response.get("Failed", [])
+            if failures:
+                _LOGGER.error("SQS batch publish failed for %d message(s)", len(failures))
+                raise HTTPException(status_code=503, detail="Message queue unavailable")
     except (BotoCoreError, ClientError) as error:
         _LOGGER.error("SQS publish failed (%s)", type(error).__name__)
         raise HTTPException(status_code=503, detail="Message queue unavailable") from None

@@ -43,7 +43,7 @@ Resources:
           - aws_demo.webhook.handler
       FunctionName: !Sub "${AWS::StackName}-whatsapp-ingress"
       MemorySize: 512
-      Timeout: 10
+      Timeout: 30
       Environment:
         Variables:
           SQS_QUEUE_URL: !Ref InboundMessageQueue

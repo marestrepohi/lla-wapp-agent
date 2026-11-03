@@ -35,7 +35,7 @@ Para inspeccionar endpoints locales:
 
 ```bash
 sam local start-api \
-  --template-file .aws-sam/build/template.yaml \
+  --template .aws-sam/build/template.yaml \
   --env-vars env.example.json
 ```
 
@@ -52,7 +52,7 @@ curl --get http://127.0.0.1:3000/webhook \
   --data-urlencode 'hub.challenge=12345'
 
 sam local invoke QueueWorkerFunction \
-  --template-file .aws-sam/build/template.yaml \
+  --template .aws-sam/build/template.yaml \
   --event events/sqs-one-message.json
 ```
 

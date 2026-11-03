@@ -34,7 +34,7 @@ flowchart LR
   Meta[Meta WhatsApp Cloud API] -->|Webhook HTTPS| APIGW[API Gateway HTTP API]
   APIGW --> Ingress[FastAPI + Mangum\nLambda en imagen Docker]
   Ingress -->|incluido en SAM| Queue[SQS FIFO + DLQ]
-  Queue -->|incluido en SAM| Worker[Lambda worker\ncontenedor LangGraph]
+  Queue -->|incluido en SAM| Worker[Lambda worker\nstub en contenedor]
 
   Worker -. futuras consultas SQL .-> DataAPI[RDS Data API]
   DataAPI -.-> Aurora[Aurora PostgreSQL Serverless v2\nprivada, auto-pausa]
