@@ -84,29 +84,61 @@ not create AWS resources; deploying the template does.
 
 ```mermaid
 flowchart LR
-  Meta[Meta WhatsApp Cloud API]
-  Edge[API Gateway HTTP API<br/>Lambda ingress<br/>FastAPI + Mangum]
-  Queue[SQS FIFO + DLQ<br/>orden, deduplicación, reintentos]
-  Worker[Lambda worker<br/>LangGraph + media + FastEmbed]
-  Data[DynamoDB<br/>clientes · auditoría/outbox · checkpoints]
-  Groq[Groq API<br/>Qwen · Whisper · visión]
-  Vectors[Qdrant Cloud opcional<br/>RAG web + memoria semántica]
-  Pages[URLs públicas<br/>script de ingesta + FastEmbed]
-  Ops[Secrets Manager<br/>CloudWatch + SNS/KMS]
+  subgraph External[Canal y servicios externos]
+    direction TB
+    Meta[Meta WhatsApp<br/>Cloud API]
+    Groq[Groq API<br/>Qwen · Whisper · visión]
+    Pages[URLs públicas<br/>ingesta local + FastEmbed]
+    Qdrant[Qdrant Cloud<br/>opcional · RAG y memoria]
+  end
 
-  Meta -->|webhook| Edge
-  Edge -->|evento validado| Queue
+  subgraph AWS[AWS · runtime demo preparado con SAM]
+    direction LR
+    subgraph Inbound[Ingreso y entrega asíncrona]
+      direction LR
+      APIGW[API Gateway<br/>HTTP API]
+      Ingress[Lambda ingress<br/>FastAPI + Mangum<br/>verifica token / HMAC<br/>deduplica wamid]
+      Queue[(SQS FIFO<br/>por remitente · lote 1)]
+      DLQ[(DLQ<br/>tras 5 fallos)]
+      APIGW --> Ingress --> Queue
+      Queue -.->|máx. 5 recepciones| DLQ
+    end
+
+    Worker[Lambda worker<br/>LangGraph + herramientas<br/>media · FastEmbed local]
+
+    subgraph Stores[DynamoDB · tres tablas]
+      direction TB
+      Customers[(CustomerDataTable<br/>clientes / saldo sintético)]
+      Conversation[(ConversationMessagesTable<br/>auditoría · outbox · idempotencia)]
+      Checkpoints[(AgentCheckpointTable<br/>checkpoint LangGraph · TTL 30 d)]
+    end
+
+    subgraph Operations[Secretos y observabilidad]
+      direction TB
+      Secrets[Secrets Manager]
+      CloudWatch[CloudWatch<br/>logs · métricas · alarmas]
+      SNS[SNS cifrado con KMS]
+      CloudWatch --> SNS
+    end
+  end
+
+  Meta -->|webhook entrante| APIGW
   Queue -->|trigger SQS| Worker
-  Worker -->|casos, hilo y ledger| Data
-  Worker -->|chat y procesamiento de media| Groq
-  Worker -. recuperación semántica .-> Vectors
-  Pages -->|fragmentos y vectores| Vectors
-  Worker -->|respuesta por Graph API| Meta
-  Ops -. secretos .-> Edge
-  Ops -. secretos .-> Worker
-  Edge -->|logs| Ops
-  Worker -->|logs y métricas| Ops
+  Worker -->|consulta balance demo| Customers
+  Worker -->|historial · outbox · ledger| Conversation
+  Worker -->|estado conversacional| Checkpoints
+  Worker -->|chat · audio · imagen| Groq
+  Worker -.->|recuperación opcional| Qdrant
+  Pages -->|fragmentos + vectores| Qdrant
+  Worker -->|respuesta directa por Graph API| Meta
+  Secrets -.->|credenciales| Ingress
+  Secrets -.->|credenciales| Worker
+  Ingress -->|logs y métricas| CloudWatch
+  Queue -->|métricas de cola| CloudWatch
+  Worker -->|logs y métricas| CloudWatch
 ```
+
+La Lambda worker responde directamente por Graph API; la rama no tiene una cola de envíos separada ni procesa callbacks de estado de entrega. `SEND_UNKNOWN` requiere conciliación manual. Las tablas de clientes contienen datos sintéticos: no son una integración productiva de facturación.
 
 El [README de AWS](aws-demo/README.md#diagrama-general-de-la-arquitectura) amplía los pasos de
 vinculación de cliente y RAG. La [evidencia de arquitectura AWS](docs/aws-deployment-evidence.md)
