@@ -4,8 +4,86 @@ Esta rama conecta el agente LangGraph que se usa localmente con el flujo:
 
 `Meta WhatsApp → API Gateway → Lambda ingress → SQS FIFO/DLQ → Lambda worker → Groq y DynamoDB`
 
-Para ver el diagrama completo de esta rama, incluida la ingesta y consulta RAG, la vinculación de
-clientes y las capas de memoria, consulta [la evidencia de arquitectura AWS](../docs/aws-deployment-evidence.md).
+Aquí se muestran el diagrama general y los flujos principales de esta rama. La
+[evidencia de arquitectura AWS](../docs/aws-deployment-evidence.md) contiene el detalle ampliado,
+incluido el webhook, LangGraph, memoria, media, reintentos y despliegue.
+
+## Diagrama general de la arquitectura
+
+```mermaid
+flowchart LR
+  Meta[Meta WhatsApp Cloud API]
+  Edge[API Gateway HTTP API<br/>Lambda ingress<br/>FastAPI + Mangum]
+  Queue[SQS FIFO + DLQ<br/>orden, deduplicación, reintentos]
+  Worker[Lambda worker<br/>LangGraph + media + FastEmbed]
+  Data[DynamoDB<br/>clientes · auditoría/outbox · checkpoints]
+  Groq[Groq API<br/>Qwen · Whisper · visión]
+  Vectors[Qdrant Cloud opcional<br/>RAG web + memoria semántica]
+  Pages[URLs públicas<br/>script de ingesta + FastEmbed]
+  Ops[Secrets Manager<br/>CloudWatch + SNS/KMS]
+
+  Meta -->|webhook| Edge
+  Edge -->|evento validado| Queue
+  Queue -->|trigger SQS| Worker
+  Worker -->|casos, hilo y ledger| Data
+  Worker -->|chat y procesamiento de media| Groq
+  Worker -. recuperación semántica .-> Vectors
+  Pages -->|fragmentos y vectores| Vectors
+  Worker -->|respuesta por Graph API| Meta
+  Ops -. secretos .-> Edge
+  Ops -. secretos .-> Worker
+  Edge -->|logs| Ops
+  Worker -->|logs y métricas| Ops
+```
+
+El webhook entra por API Gateway y Lambda; el worker responde de forma asíncrona después de consumir
+SQS. El worker consulta los tres almacenes DynamoDB y Groq. Qdrant es opcional: FastEmbed vectoriza
+las páginas en el equipo que ejecuta la ingesta y las consultas dentro del worker; no se usa la API
+de embeddings de Groq. Los mensajes de respuesta salen por Meta Graph API.
+
+## Vinculación del número con un cliente de QA
+
+```mermaid
+flowchart TD
+  In[Mensaje desde WhatsApp] --> Lookup[Busca el hash del remitente]
+  Lookup --> Linked{¿Ya está asociado?}
+  Linked -->|sí| Use[Usa el client_id asociado]
+  Linked -->|no| QA{¿Está activa la vinculación QA?}
+  QA -->|no| Deny[No consulta datos de cuenta]
+  QA -->|sí| Ask[Pide un ID sintético]
+  Ask --> Check{¿Existe el perfil y no hay conflicto?}
+  Check -->|sí| Save[Guarda el vínculo hash → client_id]
+  Check -->|no| Deny
+  Save --> Use
+```
+
+`EnableDemoIdLinking` está apagado por defecto. El ID debe corresponder a un perfil sintético
+existente; esta asociación sirve para QA y no autentica clientes reales.
+
+## Ingesta y recuperación RAG
+
+```mermaid
+flowchart LR
+  URLs[URLs HTTPS públicas] --> Fetch[Valida y descarga HTML]
+  Fetch --> Clean[Extrae texto y quita navegación]
+  Clean --> Split[Fragmentos de 1000 caracteres<br/>overlap de 200]
+  Split --> Embed[FastEmbed ONNX<br/>all-MiniLM-L6-v2]
+  Embed --> Store[Qdrant<br/>colección pública]
+```
+
+La ingesta la ejecuta un operador con `aws-demo/scripts/index_public_pages.py`. Cada fragmento
+conserva su URL y título para que el agente pueda citar las fuentes.
+
+```mermaid
+flowchart LR
+  Question[Pregunta del cliente] --> EmbedQuery[FastEmbed<br/>vector de consulta]
+  EmbedQuery --> Search[Qdrant<br/>recupera top 3]
+  Search --> Context[Fragmentos con fuente]
+  Context --> Agent[Agente LangChain + Groq]
+```
+
+El corpus web y la memoria semántica del cliente usan colecciones Qdrant separadas. Las consultas
+de cobranza siguen leyendo saldos y facturas desde DynamoDB, no desde el RAG.
 
 El worker usa el mismo agente, las mismas reglas de cobranza y el mismo adaptador para texto, audio
 e imágenes. Groq sigue siendo el modelo de lenguaje. El diseño conserva por separado el estado de

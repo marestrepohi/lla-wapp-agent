@@ -80,6 +80,38 @@ idempotency ledger reuses saved replies on retry and pauses a sender after ambig
 send outcomes that cannot be confirmed require manual reconciliation. SAM build and validation do
 not create AWS resources; deploying the template does.
 
+### AWS architecture overview
+
+```mermaid
+flowchart LR
+  Meta[Meta WhatsApp Cloud API]
+  Edge[API Gateway HTTP API<br/>Lambda ingress<br/>FastAPI + Mangum]
+  Queue[SQS FIFO + DLQ<br/>orden, deduplicación, reintentos]
+  Worker[Lambda worker<br/>LangGraph + media + FastEmbed]
+  Data[DynamoDB<br/>clientes · auditoría/outbox · checkpoints]
+  Groq[Groq API<br/>Qwen · Whisper · visión]
+  Vectors[Qdrant Cloud opcional<br/>RAG web + memoria semántica]
+  Pages[URLs públicas<br/>script de ingesta + FastEmbed]
+  Ops[Secrets Manager<br/>CloudWatch + SNS/KMS]
+
+  Meta -->|webhook| Edge
+  Edge -->|evento validado| Queue
+  Queue -->|trigger SQS| Worker
+  Worker -->|casos, hilo y ledger| Data
+  Worker -->|chat y procesamiento de media| Groq
+  Worker -. recuperación semántica .-> Vectors
+  Pages -->|fragmentos y vectores| Vectors
+  Worker -->|respuesta por Graph API| Meta
+  Ops -. secretos .-> Edge
+  Ops -. secretos .-> Worker
+  Edge -->|logs| Ops
+  Worker -->|logs y métricas| Ops
+```
+
+El [README de AWS](aws-demo/README.md#diagrama-general-de-la-arquitectura) amplía los pasos de
+vinculación de cliente y RAG. La [evidencia de arquitectura AWS](docs/aws-deployment-evidence.md)
+incluye los demás flujos, límites y decisiones de persistencia.
+
 [`docs/aws-deployment-evidence.md`](docs/aws-deployment-evidence.md) diagrams this branch’s webhook,
 LangGraph, QA client linking, DynamoDB memory, website RAG/embeddings, semantic memory, media,
 delivery retries, and deployment flows. It also separates SAM declarations from the live endpoint
