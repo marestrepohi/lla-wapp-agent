@@ -3,7 +3,8 @@
 Functional, channel-independent prototype for debt-management conversations. The local CLI,
 Chainlit, Telegram, and WhatsApp webhook send normalized events through one LangGraph runtime.
 The Meta webhook can run locally behind ngrok. The separate `aws-demo/` folder shows the AWS ingress
-and queue architecture; it does not migrate or deploy this local business runtime.
+and the deployable AWS worker runtime. The branch keeps local development available while adding
+the DynamoDB-backed AWS path.
 
 The prototype deliberately keeps financial authority in a billing tool backed by SQLite. Its
 offline scenario demo uses a fake chat model and requires no Groq, vector database, AWS, or
@@ -20,9 +21,9 @@ uv run --project langchain-agent python demo/run_demo.py
 For tests and linting, install the optional development tools:
 
 ```bash
-uv sync --project langchain-agent --extra dev
-uv run --project langchain-agent pytest
-uv run --project langchain-agent ruff check .
+uv sync --project langchain-agent --extra local --extra dev
+uv run --project langchain-agent --extra local --extra dev pytest
+uv run --project langchain-agent --extra local --extra dev ruff check .
 ```
 
 The demo prints representative scenarios: negotiation, confirmed promise, disputed balance,
@@ -33,7 +34,7 @@ unauthorized discount, human escalation, unknown client, tool failure, and opt-o
 ```text
 src/lla_agent/
   domain/       Business entities and channel-independent response types
-  persistence/  SQLite repository and seeded local data
+  persistence/  SQLite local mock, DynamoDB adapter, and synthetic case seed
   tools/        consultar_saldo, registrar_promesa_pago, escalar_a_humano
   application/  Deterministic collection operations called by LangGraph
   channels/     Telegram and WhatsApp transport adapters
@@ -41,7 +42,7 @@ demo/           Offline executable conversation demo
 tests/          Focused tool and decision tests
 docs/           AWS architecture and assessment traceability
 langchain-agent/ Optional Groq agent, web RAG pipeline, and Chainlit interface
-aws-demo/       FastAPI/Mangum Docker image and SAM sketch for API Gateway → SQS → Lambda
+aws-demo/       FastAPI/Mangum ingress, LangGraph worker image, and SAM infrastructure
 ```
 
 ## Telegram demo adapter
@@ -50,9 +51,9 @@ To run a real Telegram polling adapter, install its optional dependency and set 
 source control:
 
 ```bash
-uv sync --project langchain-agent --extra telegram
+uv sync --project langchain-agent --extra local --extra telegram
 export TELEGRAM_BOT_TOKEN="..."
-uv run --project langchain-agent python -m lla_langchain_agent.telegram
+uv run --project langchain-agent --extra local --extra telegram python -m lla_langchain_agent.telegram
 ```
 
 The Telegram runner opens one shared runtime for the polling process. It does not infer a
@@ -71,12 +72,18 @@ Financial actions use the SQLite mock; a promise is written only after explicit 
 
 ## AWS architecture demo
 
-[`aws-demo/README.md`](aws-demo/README.md) shows the AWS-native ingress path using a Lambda container
-image, API Gateway, SQS FIFO/DLQ, and a queue-triggered Lambda worker. The worker is intentionally a
-stub: it does not run the existing LangGraph agent or access billing records. The architecture
-document also maps the future AWS services for Bedrock, Aurora, AgentCore Memory, Knowledge Bases,
-S3 Vectors, and Transcribe. Building/validating locally does not create AWS resources; deploying the
-SAM template does.
+[`aws-demo/README.md`](aws-demo/README.md) documents the AWS runtime: API Gateway, ingress Lambda,
+SQS FIFO/DLQ, an agent worker Lambda, separate DynamoDB customer records, conversation audit/outbox,
+and LangGraph checkpoints, Secrets Manager, Groq, CloudWatch alarms, and optional Qdrant. The worker
+runs the same LangGraph workflow and WhatsApp text/audio/image normalizer as the local webhook. Its
+idempotency ledger reuses saved replies on retry and pauses a sender after ambiguous delivery; Meta
+send outcomes that cannot be confirmed require manual reconciliation. SAM build and validation do
+not create AWS resources; deploying the template does.
+
+[`docs/aws-deployment-evidence.md`](docs/aws-deployment-evidence.md) diagrams this branch’s webhook,
+LangGraph, QA client linking, DynamoDB memory, website RAG/embeddings, semantic memory, media,
+delivery retries, and deployment flows. It also separates SAM declarations from the live endpoint
+check made during this session.
 
 ## Conversation examples
 
@@ -92,9 +99,9 @@ validated identity is represented by `client_id="C001"`:
 
 Deterministic collection operations remain the auditable business boundary called by the LangGraph
 workflow. Groq's `create_agent` subgraph handles general questions with scoped customer lookup, RAG
-over public pages, and client-scoped nonfinancial memory; collection actions remain explicit graph
-routes with guarded SQLite tools. Conversation checkpoints use a stable hashed thread ID scoped by
-channel, conversation, and selected client.
+over public pages, and client-scoped nonfinancial memory. Local collection actions use SQLite; the
+AWS runtime uses DynamoDB. Conversation checkpoints use a stable hashed thread ID scoped by channel
+and WhatsApp sender, so linking an ID does not split the conversation.
 
 ## Configuration and limitations
 
@@ -102,7 +109,7 @@ channel, conversation, and selected client.
 - No secrets are hardcoded. Telegram requires `TELEGRAM_BOT_TOKEN` only for that adapter.
 - Local mock data is not production financial data.
 - The prototype has no real payment gateway, CRM, identity provider, or campaign scheduler. The
-  AWS-only architecture demo is separate and has not been deployed. The local WhatsApp webhook uses
+  AWS runtime and template are prepared but have not been deployed. The local WhatsApp webhook uses
   the three AVA variables plus the existing Groq key;
   it can receive text, audio, and images through ngrok, but inbound POST signatures are not
   validated. The LangChain/Groq inference is for local demonstration with mock customer data.
@@ -115,5 +122,8 @@ channel, conversation, and selected client.
 - [`docs/architecture.md`](docs/architecture.md): 100% AWS production design, controls, risks,
   operations, and assumptions.
 - [`docs/superpowers/specs/2026-11-03-aws-architecture-demo-design.md`](docs/superpowers/specs/2026-11-03-aws-architecture-demo-design.md): scope and diagram for the AWS-only architecture demo.
+- [`docs/superpowers/specs/2026-11-03-dynamodb-whatsapp-runtime-design.md`](docs/superpowers/specs/2026-11-03-dynamodb-whatsapp-runtime-design.md): DynamoDB, LangGraph checkpoints, Groq, and Qdrant runtime design.
+- [`docs/superpowers/specs/2026-11-03-whatsapp-delivery-reliability-design.md`](docs/superpowers/specs/2026-11-03-whatsapp-delivery-reliability-design.md): message idempotency, outbox, sender locks, delivery uncertainty, and alarms.
+- [`docs/superpowers/plans/2026-11-03-whatsapp-delivery-reliability.md`](docs/superpowers/plans/2026-11-03-whatsapp-delivery-reliability.md): implementation tasks and verification constraints.
 - [`docs/assessment-compliance.md`](docs/assessment-compliance.md): requirement-by-requirement
   mapping and explicit simulations.

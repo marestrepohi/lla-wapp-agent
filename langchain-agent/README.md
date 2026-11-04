@@ -14,9 +14,10 @@ mensajes por su cuenta.
 Los saldos y vencimientos se consultan desde `BillingTool` y `SQLiteRepository`. El modelo no puede
 elegir el ID del cliente ni ejecutar escrituras financieras: el grafo registra una promesa solo
 después de una propuesta pendiente y una confirmación que repite exactamente su monto y fecha.
-El RAG usa páginas públicas,
+El RAG local usa páginas públicas,
 `RecursiveCharacterTextSplitter` (1000 caracteres, 200 de solapamiento), embeddings locales
-`all-MiniLM-L6-v2` y Chroma persistido en disco. El texto, los fragmentos recuperados y las preguntas
+`all-MiniLM-L6-v2` y Chroma persistido en disco. Qdrant usa FastEmbed/ONNX para la memoria remota
+con el mismo modelo de 384 dimensiones. El texto, los fragmentos recuperados y las preguntas
 se envían a Groq. Usa solo datos no sensibles en esta demo.
 
 ## Ejecutar
@@ -24,8 +25,8 @@ se envían a Groq. Usa solo datos no sensibles en esta demo.
 Desde la raíz del repo:
 
 ```bash
-uv sync --project langchain-agent
-uv run --project langchain-agent python -m lla_langchain_agent.cli --client-id C001
+uv sync --project langchain-agent --extra local
+uv run --project langchain-agent --extra local python -m lla_langchain_agent.cli --client-id C001
 uv run --project langchain-agent python demo/run_demo.py
 ```
 
@@ -37,7 +38,7 @@ archivo. Usa una clave Qdrant nueva si la anterior se compartió en un chat.
 ```dotenv
 QDRANT_URL=https://your-cluster.aws.cloud.qdrant.io:6333
 QDRANT_API_KEY=your_rotated_key
-QDRANT_MEMORY_COLLECTION=lla_customer_memories
+QDRANT_MEMORY_COLLECTION=lla_customer_memories_fastembed_v1
 ```
 
 ## Interfaz RAG con Chainlit
@@ -45,9 +46,9 @@ QDRANT_MEMORY_COLLECTION=lla_customer_memories
 Desde la raíz del repo, inicia la interfaz:
 
 ```bash
-uv sync --project langchain-agent
+uv sync --project langchain-agent --extra local
 cd langchain-agent
-uv run chainlit run chainlit_app.py --headless --host 127.0.0.1 --port 8000
+uv run --extra local chainlit run chainlit_app.py --headless --host 127.0.0.1 --port 8000
 ```
 
 Abre `http://127.0.0.1:8000` y conversa directamente con el agente. Si ya hay una colección Chroma
@@ -99,8 +100,8 @@ no como despliegue público.
 Instala la extensión web y arranca el servidor en la raíz del repo:
 
 ```bash
-uv sync --project langchain-agent --extra webhook
-uv run --project langchain-agent --extra webhook uvicorn lla_langchain_agent.whatsapp_webhook:app --host 0.0.0.0 --port 8001
+uv sync --project langchain-agent --extra local --extra webhook
+uv run --project langchain-agent --extra local --extra webhook uvicorn lla_langchain_agent.whatsapp_webhook:app --host 0.0.0.0 --port 8001
 ```
 
 En otra terminal WSL inicia el túnel:
@@ -179,8 +180,8 @@ El mismo runtime puede atender un bot de Telegram durante una prueba local. Conf
 `TELEGRAM_BOT_TOKEN` en el entorno y ejecuta:
 
 ```bash
-uv sync --project langchain-agent --extra telegram
-uv run --project langchain-agent python -m lla_langchain_agent.telegram
+uv sync --project langchain-agent --extra local --extra telegram
+uv run --project langchain-agent --extra local --extra telegram python -m lla_langchain_agent.telegram
 ```
 
 El adaptador nunca obtiene un `client_id` del texto. Para habilitar consultas de cuenta, el

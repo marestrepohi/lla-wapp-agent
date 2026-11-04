@@ -1,13 +1,46 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  Architecture demo for WhatsApp ingress using API Gateway, Lambda container images,
-  and SQS FIFO. It does not deploy the billing agent or its target data/AI services.
+  WhatsApp Cloud API agent using API Gateway, SQS FIFO, Lambda container images,
+  DynamoDB, Groq, and optional Qdrant.
 
 Parameters:
   WhatsAppWebhookSecretArn:
     Type: String
-    Description: Existing Secrets Manager JSON secret with app_secret and verify_token fields.
+    Description: Secrets Manager JSON with app_secret and verify_token for webhook verification.
+  WhatsAppAccessTokenSecretArn:
+    Type: String
+    Description: Secrets Manager JSON with the access_token field for sending WhatsApp messages.
+  GroqApiKeySecretArn:
+    Type: String
+    Description: Secrets Manager JSON with the api_key field for Groq.
+  QdrantSecretArn:
+    Type: String
+    Default: ''
+    Description: Optional Secrets Manager JSON with api_key and optionally url fields.
+  QdrantUrl:
+    Type: String
+    Default: ''
+    Description: Optional Qdrant cluster URL. A url in QdrantSecretArn takes precedence.
+  WhatsAppPhoneNumberId:
+    Type: String
+    Description: Meta WhatsApp Cloud API phone number ID used to send replies.
+  GroqModel:
+    Type: String
+    Default: qwen/qwen3.8-27b
+  EnableDemoIdLinking:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable ID-only linking for synthetic QA profiles only; keep false for real customers.
+  AlarmNotificationEmail:
+    Type: String
+    Default: ''
+    Description: Optional email address for CloudWatch alarm notifications. The recipient must confirm the SNS subscription.
+
+Conditions:
+  HasQdrantSecret: !Not [!Equals [!Ref QdrantSecretArn, '']]
+  HasAlarmNotificationEmail: !Not [!Equals [!Ref AlarmNotificationEmail, '']]
 
 Resources:
   WhatsAppHttpApi:
@@ -29,10 +62,82 @@ Resources:
       ContentBasedDeduplication: false
       SqsManagedSseEnabled: true
       MessageRetentionPeriod: 345600
-      VisibilityTimeout: 360
+      VisibilityTimeout: 720
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt InboundDeadLetterQueue.Arn
         maxReceiveCount: 5
+
+  CustomerDataTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  AgentCheckpointTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  ConversationMessagesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
 
   WebhookIngressFunction:
     Type: AWS::Serverless::Function
@@ -41,7 +146,7 @@ Resources:
       ImageConfig:
         Command:
           - aws_demo.webhook.handler
-      FunctionName: !Sub "${AWS::StackName}-whatsapp-ingress"
+      FunctionName: !Sub '${AWS::StackName}-whatsapp-ingress'
       MemorySize: 512
       Timeout: 30
       Environment:
@@ -75,7 +180,7 @@ Resources:
     Metadata:
       Dockerfile: Dockerfile
       DockerContext: .
-      DockerTag: webhook-demo
+      DockerTag: webhook
 
   QueueWorkerFunction:
     Type: AWS::Serverless::Function
@@ -84,10 +189,28 @@ Resources:
       ImageConfig:
         Command:
           - aws_demo.worker.handler
-      FunctionName: !Sub "${AWS::StackName}-queue-worker"
-      MemorySize: 1024
-      Timeout: 60
+      FunctionName: !Sub '${AWS::StackName}-queue-worker'
+      MemorySize: 3008
+      Timeout: 120
       ReservedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          WHATSAPP_SECRET_ARN: !Ref WhatsAppWebhookSecretArn
+          WHATSAPP_ACCESS_TOKEN_SECRET_ARN: !Ref WhatsAppAccessTokenSecretArn
+          GROQ_API_KEY_SECRET_ARN: !Ref GroqApiKeySecretArn
+          QDRANT_SECRET_ARN: !Ref QdrantSecretArn
+          QDRANT_URL: !Ref QdrantUrl
+          QDRANT_WEB_COLLECTION: lla_public_web_pages_fastembed_v1
+          DYNAMODB_CUSTOMER_TABLE: !Ref CustomerDataTable
+          DYNAMODB_CONVERSATION_TABLE: !Ref ConversationMessagesTable
+          DYNAMODB_CHECKPOINT_TABLE: !Ref AgentCheckpointTable
+          SQS_QUEUE_URL: !Ref InboundMessageQueue
+          WHATSAPP_PHONE_NUMBER_ID: !Ref WhatsAppPhoneNumberId
+          WHATSAPP_GRAPH_API_VERSION: v23.0
+          WHATSAPP_QA_ID_LINKING: !Ref EnableDemoIdLinking
+          GROQ_MODEL: !Ref GroqModel
+          CHECKPOINT_TTL_SECONDS: '2592000'
+          FASTEMBED_CACHE_PATH: /tmp/fastembed
       Policies:
         - Version: '2012-10-17'
           Statement:
@@ -98,6 +221,36 @@ Resources:
                 - sqs:ChangeMessageVisibility
                 - sqs:GetQueueAttributes
               Resource: !GetAtt InboundMessageQueue.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+              Resource: !GetAtt CustomerDataTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource: !GetAtt ConversationMessagesTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:Query
+                - dynamodb:BatchGetItem
+                - dynamodb:BatchWriteItem
+              Resource: !GetAtt AgentCheckpointTable.Arn
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref WhatsAppWebhookSecretArn
+                - !Ref WhatsAppAccessTokenSecretArn
+                - !Ref GroqApiKeySecretArn
+                - !If [HasQdrantSecret, !Ref QdrantSecretArn, !Ref GroqApiKeySecretArn]
       Events:
         InboundMessages:
           Type: SQS
@@ -107,31 +260,286 @@ Resources:
             FunctionResponseTypes:
               - ReportBatchItemFailures
     Metadata:
-      Dockerfile: Dockerfile
-      DockerContext: .
-      DockerTag: worker-demo
+      Dockerfile: aws-demo/worker.Dockerfile
+      DockerContext: ..
+      DockerTag: whatsapp-agent
 
   WebhookIngressLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-whatsapp-ingress"
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-whatsapp-ingress'
       RetentionInDays: 7
 
   QueueWorkerLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-queue-worker"
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-queue-worker'
       RetentionInDays: 7
+
+  AlarmTopicKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub 'Encryption key for ${AWS::StackName} WhatsApp alarm notifications'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableAccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowCloudWatchAlarmsFromThisStack
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+            Resource: '*'
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AWS::StackName}-*'
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+          - Sid: AllowSnsToUseKeyForThisTopic
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+                kms:EncryptionContext:aws:sns:topicArn: !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-alarms'
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-alarms'
+      KmsMasterKeyId: !Ref AlarmTopicKey
+
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlarmTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudWatchAlarmsFromThisStack
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AWS::StackName}-*'
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmNotificationEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmNotificationEmail
+
+  QueueWorkerFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref QueueWorkerLogGroup
+      FilterPattern: '{ $.event = "queue_message_failed" }'
+      MetricTransformations:
+        - MetricName: QueueMessageFailures
+          MetricNamespace: !Sub '${AWS::StackName}/WhatsAppAgent'
+          MetricValue: '1'
+
+  QueueOldestMessageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-queue-oldest-message'
+      AlarmDescription: Inbound WhatsApp work has been waiting longer than five minutes.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt InboundMessageQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 300
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  QueueVisibleBacklogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-queue-visible-backlog'
+      AlarmDescription: Ten or more inbound WhatsApp messages are visible in the queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt InboundMessageQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  QueueInFlightBacklogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-queue-in-flight-backlog'
+      AlarmDescription: Ten or more inbound WhatsApp messages are currently in flight.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesNotVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt InboundMessageQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  DeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-queue-dead-letter-messages'
+      AlarmDescription: At least one WhatsApp message is waiting in the dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt InboundDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  QueueWorkerRecordFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-worker-record-failures'
+      AlarmDescription: The worker returned at least one failed SQS record.
+      Namespace: !Sub '${AWS::StackName}/WhatsAppAgent'
+      MetricName: QueueMessageFailures
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  QueueWorkerLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-worker-lambda-errors'
+      AlarmDescription: The WhatsApp worker Lambda invocation failed.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref QueueWorkerFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  QueueWorkerThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-worker-throttles'
+      AlarmDescription: The WhatsApp worker Lambda was throttled.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref QueueWorkerFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  QueueWorkerNearTimeoutAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-worker-near-timeout'
+      AlarmDescription: WhatsApp worker invocation duration reached 100 seconds.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref QueueWorkerFunction
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 100000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
 
 Outputs:
   WebhookCallbackUrl:
     Description: Callback URL for Meta WhatsApp webhooks
-    Value: !Sub "https://${WhatsAppHttpApi}.execute-api.${AWS::Region}.amazonaws.com/webhook"
+    Value: !Sub 'https://${WhatsAppHttpApi}.execute-api.${AWS::Region}.amazonaws.com/webhook'
   HealthUrl:
-    Description: Health endpoint for the architecture demo
-    Value: !Sub "https://${WhatsAppHttpApi}.execute-api.${AWS::Region}.amazonaws.com/health"
+    Description: Health endpoint
+    Value: !Sub 'https://${WhatsAppHttpApi}.execute-api.${AWS::Region}.amazonaws.com/health'
+  CustomerDataTableName:
+    Description: DynamoDB table containing customer profiles, identity links, and billing records
+    Value: !Ref CustomerDataTable
+  ConversationMessagesTableName:
+    Description: DynamoDB table containing conversation audit and message delivery state
+    Value: !Ref ConversationMessagesTable
+  AgentCheckpointTableName:
+    Description: DynamoDB table containing LangGraph conversation state
+    Value: !Ref AgentCheckpointTable
+  AlarmTopicArn:
+    Description: SNS topic receiving WhatsApp worker CloudWatch alarms
+    Value: !Ref AlarmTopic
   InboundQueueArn:
-    Description: SQS FIFO queue consumed by the demonstration worker
+    Description: SQS FIFO queue consumed by the WhatsApp agent worker
     Value: !GetAtt InboundMessageQueue.Arn

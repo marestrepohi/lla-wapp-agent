@@ -8,7 +8,9 @@ import uuid
 from datetime import date, timedelta
 
 from lla_agent.domain.models import AgentResponse, Balance, Intent, ToolCall
-from lla_agent.persistence.sqlite import ClientNotFoundError, SQLiteRepository, ToolError
+from lla_agent.persistence.errors import ClientNotFoundError, ToolError
+from lla_agent.persistence.ports import CustomerRepository
+from lla_agent.persistence.sqlite import SQLiteRepository
 from lla_agent.tools.business import BillingTool, EscalationTool, PaymentsTool
 
 OPT_OUT_TERMS = ("stop", "baja", "cancelar", "no me contacten", "no quiero mensajes", "salir")
@@ -60,7 +62,7 @@ ACCOUNT_DETAIL_QUESTION_TERMS = (
 class CollectionsAgent:
     """Deterministic collection operations called by the LangGraph workflow."""
 
-    def __init__(self, repository: SQLiteRepository | None = None):
+    def __init__(self, repository: CustomerRepository | None = None):
         self.repository = repository or SQLiteRepository()
         self.billing = BillingTool(self.repository)
         self.payments = PaymentsTool(self.repository)
@@ -116,7 +118,7 @@ class CollectionsAgent:
             )
         try:
             client = self.repository.get_client(client_id)
-        except sqlite3.Error:
+        except (sqlite3.Error, ToolError):
             client = None
         if client is None:
             return AgentResponse(
@@ -159,7 +161,7 @@ class CollectionsAgent:
 
         try:
             account = self.repository.get_account_details(balance.cliente_id)
-        except sqlite3.Error:
+        except (sqlite3.Error, ToolError):
             account = None
         if account:
             plan_totals: dict[str, int] = {}
@@ -217,7 +219,7 @@ class CollectionsAgent:
             )
         try:
             self.repository.save_pending_promise(client_id, amount, payment_date)
-        except sqlite3.Error as error:
+        except (sqlite3.Error, ToolError) as error:
             return AgentResponse(
                 "No pude guardar la propuesta por un problema temporal, así que aún no está pendiente. "
                 "Inténtalo más tarde o pide ayuda a un asesor.",
@@ -248,7 +250,7 @@ class CollectionsAgent:
     def confirm_promise_response(self, client_id: str, text: str) -> AgentResponse:
         try:
             pending = self.repository.get_pending_promise(client_id)
-        except sqlite3.Error as error:
+        except (sqlite3.Error, ToolError) as error:
             return AgentResponse(
                 "No pude revisar la propuesta por un problema temporal, así que no registré la promesa. "
                 "Inténtalo más tarde o pide ayuda a un asesor.",
@@ -279,7 +281,7 @@ class CollectionsAgent:
             )
         try:
             promise = self.payments.registrar_promesa_pago(client_id, amount, payment_date)
-        except (ValueError, ClientNotFoundError, sqlite3.Error) as error:
+        except (ValueError, ClientNotFoundError, ToolError, sqlite3.Error) as error:
             return AgentResponse(
                 "No pude registrar la promesa en este momento; no quedó confirmada. "
                 "Inténtalo más tarde o pide ayuda a un asesor.",
@@ -327,7 +329,7 @@ class CollectionsAgent:
         calls = list(prior_calls or [])
         try:
             escalation = self.escalations.escalar_a_humano(client_id, reason, summary)
-        except sqlite3.Error as error:
+        except (sqlite3.Error, ToolError) as error:
             calls.append(
                 ToolCall(
                     "escalar_a_humano",
@@ -364,7 +366,7 @@ class CollectionsAgent:
                 "error_consulta_saldo",
                 "Fallo al consultar saldo; no se informó un monto.",
             )
-        except sqlite3.Error as error:
+        except (sqlite3.Error, ToolError) as error:
             return AgentResponse(
                 "No pude consultar tu saldo ni enviar el caso a revisión. No inventaré un monto; "
                 "contacta a un asesor.",

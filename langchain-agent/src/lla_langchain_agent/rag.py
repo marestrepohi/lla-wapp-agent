@@ -9,22 +9,24 @@ import threading
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlparse
 
-import requests
-from bs4 import BeautifulSoup
-from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from .embeddings import DEFAULT_EMBEDDING_MODEL
+
+if TYPE_CHECKING:
+    from langchain_chroma import Chroma
+    from langchain_huggingface import HuggingFaceEmbeddings
 
 MAX_PAGES = 5
 MAX_HTML_BYTES = 2_000_000
 MAX_PAGE_CHARS = 100_000
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
-DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "lla_web_rag_demo"
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,6 +62,8 @@ def _validate_public_https_url(url: str) -> None:
 
 
 def _get_page(url: str) -> tuple[str, str, str]:
+    import requests
+
     current_url = url
     headers = {"User-Agent": "LLA-RAG-Demo/0.1 (local educational prototype)"}
 
@@ -102,6 +106,8 @@ def _get_page(url: str) -> tuple[str, str, str]:
 
 def load_web_pages(urls: list[str]) -> list[Document]:
     """Fetch and clean a small set of public web pages into LangChain Documents."""
+    from bs4 import BeautifulSoup
+
     unique_urls = list(dict.fromkeys(url.strip() for url in urls if url.strip()))
     if not unique_urls:
         raise ValueError("Agrega al menos una URL HTTPS.")
@@ -152,6 +158,8 @@ def split_documents(documents: list[Document]) -> list[Document]:
 @lru_cache(maxsize=1)
 def get_embeddings(model_name: str = DEFAULT_EMBEDDING_MODEL) -> HuggingFaceEmbeddings:
     """Load one local Sentence Transformers model; no embedding API key is required."""
+    from langchain_huggingface import HuggingFaceEmbeddings
+
     return HuggingFaceEmbeddings(
         model_name=model_name,
         model_kwargs={"device": "cpu"},
@@ -178,6 +186,8 @@ def index_documents(
     persist_directory: str,
 ) -> tuple[Chroma, list[str]]:
     """Replace this demo collection and persist the new vectors locally in Chroma."""
+    from langchain_chroma import Chroma
+
     vector_store = Chroma(
         collection_name=COLLECTION_NAME,
         embedding_function=embeddings,
@@ -244,6 +254,8 @@ def load_existing_index(
     """Open the saved web collection when it exists and contains at least one chunk."""
     if not (Path(persist_directory) / "chroma.sqlite3").is_file():
         return None
+
+    from langchain_chroma import Chroma
 
     vector_store = Chroma(
         collection_name=COLLECTION_NAME,

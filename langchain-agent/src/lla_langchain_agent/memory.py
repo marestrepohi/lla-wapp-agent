@@ -17,10 +17,10 @@ from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient, models
 
-from .rag import DEFAULT_EMBEDDING_MODEL, get_embeddings
+from .embeddings import DEFAULT_EMBEDDING_MODEL, FastEmbedEmbeddings
 
 MemoryCategory = Literal["preferencia", "contexto_general", "seguimiento"]
-COLLECTION_NAME = "lla_customer_memories"
+COLLECTION_NAME = "lla_customer_memories_fastembed_v1"
 MEMORY_CATEGORIES = frozenset({"preferencia", "contexto_general", "seguimiento"})
 MAX_MEMORY_CHARS = 500
 
@@ -168,7 +168,7 @@ def get_qdrant_memory() -> QdrantCustomerMemory | None:
 
     collection_name = os.getenv("QDRANT_MEMORY_COLLECTION", COLLECTION_NAME).strip() or COLLECTION_NAME
     embedding_model = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
-    embeddings = get_embeddings(embedding_model)
+    embeddings = FastEmbedEmbeddings(embedding_model)
     dimensions = len(embeddings.embed_query("dimension check for customer memory"))
     client = QdrantClient(url=url, api_key=api_key, prefer_grpc=False, timeout=10)
 

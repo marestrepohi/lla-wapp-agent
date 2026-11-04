@@ -1,5 +1,11 @@
 # Demo de arquitectura AWS para el agente de WhatsApp
 
+> **Actualización:** este documento describe el alcance inicial de la demo y quedó superado por
+> [`2026-11-03-dynamodb-whatsapp-runtime-design.md`](2026-11-03-dynamodb-whatsapp-runtime-design.md).
+> En la rama actual el worker ya ejecuta el agente con Groq y usa DynamoDB para clientes,
+> vínculos de identidad y checkpoints; Qdrant es opcional para RAG y memoria semántica. No se han
+> desplegado recursos AWS.
+
 **Estado:** alcance aprobado para demostración; no se aprovisionan recursos AWS en esta rama.
 
 ## Objetivo

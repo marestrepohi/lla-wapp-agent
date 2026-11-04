@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import date
 
 from lla_agent.domain.models import Balance, Escalation, PaymentPromise
-from lla_agent.persistence.sqlite import SQLiteRepository
+from lla_agent.persistence.ports import CustomerRepository
 
 
 class BillingTool:
-    def __init__(self, repository: SQLiteRepository):
+    def __init__(self, repository: CustomerRepository):
         self.repository = repository
 
     def consultar_saldo(self, cliente_id: str) -> Balance:
@@ -18,7 +18,7 @@ class BillingTool:
 
 
 class PaymentsTool:
-    def __init__(self, repository: SQLiteRepository):
+    def __init__(self, repository: CustomerRepository):
         self.repository = repository
 
     def registrar_promesa_pago(
@@ -33,7 +33,7 @@ class PaymentsTool:
 
 
 class EscalationTool:
-    def __init__(self, repository: SQLiteRepository):
+    def __init__(self, repository: CustomerRepository):
         self.repository = repository
 
     def escalar_a_humano(self, cliente_id: str | None, motivo: str, resumen: str) -> Escalation:

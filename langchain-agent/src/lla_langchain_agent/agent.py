@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
 from langchain.agents import create_agent
@@ -13,7 +12,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 
-from lla_agent.persistence.sqlite import SQLiteRepository
+from lla_agent.persistence.ports import CustomerRepository
 
 from .rag import WebCorpus
 from .state import LLAAgentState
@@ -41,8 +40,8 @@ Continuidad y memoria:
 Datos y herramientas:
 - Para información de cuenta, usa solo herramientas autorizadas y datos devueltos por ellas.
 - Si preguntan por planes, servicios, facturas, pagos aplicados o gestiones anteriores, consulta
-  `consultar_contexto_cliente` y responde únicamente con los registros de SQLite devueltos.
-- Para saldos, usa el saldo calculado por SQLite. No sumes ni reconstruyas importes desde el historial,
+  `consultar_contexto_cliente` y responde únicamente con los registros del repositorio devueltos.
+- Para saldos, usa el saldo calculado por el repositorio. No sumes ni reconstruyas importes desde el historial,
   los recuerdos o las notas de cobranza.
 - Si no hay un cliente validado, no consultes ni reveles datos financieros. Explica que el perfil
   aún no está vinculado y ofrece la alternativa disponible.
@@ -64,7 +63,7 @@ Audio e imágenes:
 
 def build_agent(
     *,
-    repository: SQLiteRepository,
+    repository: CustomerRepository,
     web_corpus: WebCorpus,
     model_name: str = DEFAULT_MODEL,
     model: BaseChatModel | None = None,
@@ -77,8 +76,8 @@ def build_agent(
         """Consultar servicios, facturas y gestiones del cliente validado en esta sesión.
 
         Usa esta herramienta para preguntas sobre planes de telefonía, internet o TV, facturas,
-        pagos parciales, vencimientos, saldo y antecedentes de cobranza. Los datos provienen de
-        SQLite y no deben inferirse de la conversación.
+        pagos parciales, vencimientos, saldo y antecedentes de cobranza. Los datos provienen del
+        repositorio autorizado y no deben inferirse de la conversación.
         """
         client_id = runtime.state.get("client_id")
         if not client_id:
@@ -87,7 +86,7 @@ def build_agent(
             account = repository.get_account_details(client_id)
             if account is None:
                 return "No se encontró un cliente validado para esta sesión."
-        except (sqlite3.Error, LookupError, RuntimeError) as error:
+        except (LookupError, RuntimeError) as error:
             return f"No fue posible consultar los datos del cliente: {type(error).__name__}"
         return json.dumps(account, ensure_ascii=False)
 

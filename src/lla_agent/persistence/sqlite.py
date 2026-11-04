@@ -14,14 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from lla_agent.domain.models import Balance, Escalation, PaymentPromise
-
-
-class ClientNotFoundError(LookupError):
-    """Raised when a client identifier cannot be found."""
-
-
-class ToolError(RuntimeError):
-    """Raised when a simulated source system is unavailable."""
+from lla_agent.persistence.errors import ClientNotFoundError, ToolError
 
 
 class SQLiteRepository:

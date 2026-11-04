@@ -12,10 +12,9 @@ from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, ToolMessage
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from lla_agent.domain.models import AgentResponse, InboundMessage, Intent, ToolCall
-from lla_agent.persistence.sqlite import SQLiteRepository
+from lla_agent.persistence.ports import CustomerRepository
 
 from .agent import DEFAULT_MODEL
 from .rag import WebCorpus
@@ -27,9 +26,15 @@ _LOGGER = logging.getLogger(__name__)
 class AgentRuntime:
     """Invoke one compiled graph with per-message trusted context."""
 
-    def __init__(self, graph: Any, web_corpus: WebCorpus) -> None:
+    def __init__(
+        self,
+        graph: Any,
+        web_corpus: WebCorpus,
+        repository: CustomerRepository | None = None,
+    ) -> None:
         self._graph = graph
         self.web_corpus = web_corpus
+        self._repository = repository
 
     async def handle(self, message: InboundMessage) -> AgentResponse:
         """Run the graph for one inbound message and convert its final state."""
@@ -45,16 +50,29 @@ class AgentRuntime:
         )
         return self._response(result, message.message_id)
 
+    def record_direct_exchange(self, message: InboundMessage, response_text: str) -> None:
+        """Persist a deterministic channel response that intentionally bypasses the graph."""
+        if self._repository is None:
+            raise RuntimeError("Direct exchange audit requires an injected repository.")
+        self._repository.record_message(
+            message.message_id,
+            message.client_id,
+            message.external_id,
+            "inbound",
+            message.text,
+        )
+        self._repository.record_message(
+            f"{message.channel}:{message.message_id}:outbound",
+            message.client_id,
+            message.external_id,
+            "outbound",
+            response_text,
+        )
+
     @staticmethod
     def thread_id(message: InboundMessage) -> str:
-        """Return a stable, non-PII checkpoint key for a conversation/customer pair."""
-        raw_key = "\0".join(
-            (
-                message.channel,
-                message.conversation_id,
-                message.client_id or "anonymous",
-            )
-        )
+        """Return a stable, non-PII checkpoint key for one channel conversation."""
+        raw_key = "\0".join((message.channel, message.conversation_id))
         digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
         return f"{message.channel}:{digest}"
 
@@ -121,18 +139,36 @@ class AgentRuntime:
 @asynccontextmanager
 async def open_runtime(
     *,
-    repository: SQLiteRepository,
-    checkpoint_path: str | Path,
+    repository: CustomerRepository,
+    checkpoint_path: str | Path | None = None,
+    checkpointer: Any | None = None,
     model_name: str = DEFAULT_MODEL,
     model: BaseChatModel | None = None,
     web_corpus: WebCorpus | None = None,
     qa_id_linking: bool = False,
 ) -> AsyncIterator[AgentRuntime]:
-    """Open one SQLite checkpointer and compile one graph for the runtime lifetime."""
+    """Open the local SQLite saver or compile with an injected persistent checkpointer."""
+    web_corpus = web_corpus or WebCorpus()
+    if checkpointer is not None:
+        graph = build_workflow(
+            repository=repository,
+            checkpointer=checkpointer,
+            model_name=model_name,
+            model=model,
+            web_corpus=web_corpus,
+            qa_id_linking=qa_id_linking,
+        )
+        _LOGGER.info("LangGraph runtime ready with external checkpointer")
+        yield AgentRuntime(graph, web_corpus, repository)
+        return
+
+    if checkpoint_path is None:
+        raise ValueError("checkpoint_path is required for the local SQLite checkpointer")
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
     path = str(checkpoint_path)
     if path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-    web_corpus = web_corpus or WebCorpus()
     async with AsyncSqliteSaver.from_conn_string(path) as checkpointer:
         graph = build_workflow(
             repository=repository,
@@ -143,4 +179,4 @@ async def open_runtime(
             qa_id_linking=qa_id_linking,
         )
         _LOGGER.info("LLA graph runtime ready")
-        yield AgentRuntime(graph, web_corpus)
+        yield AgentRuntime(graph, web_corpus, repository)

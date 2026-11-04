@@ -15,7 +15,7 @@ from langgraph.graph import END, START, StateGraph
 
 from lla_agent.application.agent import CollectionsAgent
 from lla_agent.domain.models import AgentResponse, Balance, Intent, ToolCall
-from lla_agent.persistence.sqlite import SQLiteRepository
+from lla_agent.persistence.ports import CustomerRepository
 
 from .agent import DEFAULT_MODEL, build_agent
 from .memory import QdrantCustomerMemory, get_qdrant_memory, prepare_memory_context
@@ -193,7 +193,7 @@ def _balance_from_state(state: LLAAgentState) -> Balance:
 
 def build_workflow(
     *,
-    repository: SQLiteRepository,
+    repository: CustomerRepository,
     checkpointer: Any,
     model_name: str = DEFAULT_MODEL,
     model: BaseChatModel | None = None,
