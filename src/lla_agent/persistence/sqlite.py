@@ -6,10 +6,12 @@ It can be replaced by DynamoDB/Aurora repositories without changing the agent or
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import sqlite3
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -64,6 +66,11 @@ class SQLiteRepository:
                     external_id TEXT PRIMARY KEY,
                     client_id TEXT NOT NULL,
                     linked_at TEXT NOT NULL,
+                    FOREIGN KEY(client_id) REFERENCES clients(client_id)
+                );
+                CREATE TABLE IF NOT EXISTS qa_simulated_clients (
+                    client_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
                     FOREIGN KEY(client_id) REFERENCES clients(client_id)
                 );
                 CREATE TABLE IF NOT EXISTS client_services (
@@ -145,6 +152,22 @@ class SQLiteRepository:
                     body TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS message_delivery_statuses (
+                    message_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    provider_timestamp TEXT,
+                    received_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS whatsapp_opening_contexts (
+                    message_id TEXT PRIMARY KEY,
+                    external_id TEXT NOT NULL,
+                    callback_data TEXT NOT NULL,
+                    provider_timestamp TEXT,
+                    created_at TEXT NOT NULL,
+                    consumed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_whatsapp_opening_context_pending
+                    ON whatsapp_opening_contexts(external_id, consumed_at, provider_timestamp);
                 """
             )
 
@@ -166,6 +189,14 @@ class SQLiteRepository:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 clients,
+            )
+            now = datetime.now(UTC).isoformat()
+            db.executemany(
+                "INSERT OR IGNORE INTO qa_simulated_clients (client_id, created_at) VALUES (?, ?)",
+                [
+                    (client_id, now)
+                    for client_id in ("1234", "5678", "9012", "C001", "C002", "C003", "CERR")
+                ],
             )
             services = [
                 ("SVC-QA1234-MOB", "1234", "mobile", "Móvil Conecta 35 GB", 3900, "active"),
@@ -265,6 +296,117 @@ class SQLiteRepository:
         with self._connect() as db:
             return db.execute("SELECT * FROM clients WHERE client_id = ?", (client_id,)).fetchone()
 
+    def ensure_qa_client(self, client_id: str) -> bool:
+        """Create a deterministic fictional account for a previously unknown QA ID.
+
+        Returns True when the ID is a simulated QA profile (new or already present).
+        Existing non-QA customer rows are never modified.
+        """
+        normalized_id = client_id.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9-]{3,20}", normalized_id):
+            raise ValueError("El ID de prueba debe tener entre 3 y 20 letras, números o guiones.")
+
+        digest = hashlib.sha256(normalized_id.encode("utf-8")).hexdigest()
+        today = date.today()
+        days_overdue = 7 + int(digest[:4], 16) % 54
+        due_date = today - timedelta(days=days_overdue)
+        issue_date = due_date - timedelta(days=30)
+        billing_period = due_date.strftime("%Y-%m")
+
+        product_catalog = {
+            "mobile": ("Móvil Conecta 30 GB", 3200 + int(digest[4:8], 16) % 3600),
+            "internet": ("Fibra Hogar 500 Mbps", 4900 + int(digest[8:12], 16) % 5100),
+            "tv": ("TV Familiar HD", 2200 + int(digest[12:16], 16) % 2100),
+        }
+        service_types = ["mobile", "internet"]
+        if int(digest[16:18], 16) % 2:
+            service_types.append("tv")
+
+        created_at = datetime.now(UTC).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT 1 FROM clients WHERE client_id = ?", (normalized_id,)
+            ).fetchone()
+            if existing is not None:
+                simulated = db.execute(
+                    "SELECT 1 FROM qa_simulated_clients WHERE client_id = ?", (normalized_id,)
+                ).fetchone()
+                return simulated is not None
+
+            service_rows = []
+            invoice_rows = []
+            balance_cents = 0
+            for service_type in service_types:
+                plan_name, amount_cents = product_catalog[service_type]
+                suffix = service_type.upper()[:3]
+                service_id = f"QA-{digest[:12]}-{suffix}"
+                invoice_id = f"INV-QA-{digest[:12]}-{suffix}"
+                service_rows.append(
+                    (service_id, normalized_id, service_type, plan_name, amount_cents, "active")
+                )
+                invoice_rows.append(
+                    (
+                        invoice_id,
+                        service_id,
+                        billing_period,
+                        issue_date.isoformat(),
+                        due_date.isoformat(),
+                        amount_cents,
+                        0,
+                        "unpaid",
+                    )
+                )
+                balance_cents += amount_cents
+
+            db.execute(
+                """INSERT INTO clients
+                   (client_id, full_name, external_id, balance_cents, currency, due_date,
+                    status, billing_available)
+                   VALUES (?, ?, NULL, ?, 'PAB', ?, 'overdue', 1)""",
+                (
+                    normalized_id,
+                    f"Cliente simulado QA {normalized_id}",
+                    balance_cents,
+                    due_date.isoformat(),
+                ),
+            )
+            db.execute(
+                "INSERT INTO qa_simulated_clients (client_id, created_at) VALUES (?, ?)",
+                (normalized_id, created_at),
+            )
+            db.executemany(
+                """INSERT INTO client_services
+                   (service_id, client_id, service_type, plan_name, monthly_fee_cents, status)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                service_rows,
+            )
+            db.executemany(
+                """INSERT INTO invoices
+                   (invoice_id, service_id, billing_period, issue_date, due_date,
+                    amount_cents, paid_cents, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                invoice_rows,
+            )
+            db.execute(
+                """INSERT INTO collection_events
+                   (event_id, client_id, occurred_at, event_type, summary, outcome)
+                   VALUES (?, ?, ?, 'qa_simulation', ?, 'simulado')""",
+                (
+                    f"EV-QA-{digest[:12]}-01",
+                    normalized_id,
+                    created_at,
+                    "Expediente generado automáticamente para QA; no contiene datos reales ni registra acciones ejecutadas.",
+                ),
+            )
+        return True
+
+    def is_qa_simulated_client(self, client_id: str) -> bool:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT 1 FROM qa_simulated_clients WHERE client_id = ?", (client_id,)
+            ).fetchone() is not None
+
     def get_client_by_external_id(self, external_id: str) -> sqlite3.Row | None:
         with self._connect() as db:
             linked = db.execute(
@@ -301,6 +443,15 @@ class SQLiteRepository:
                 ).fetchone()
             if existing is not None:
                 return "already_linked" if existing["client_id"] == normalized_client_id else "conflict"
+
+            if external_id.startswith("whatsapp:"):
+                existing_identity = db.execute(
+                    """SELECT external_id FROM client_external_identities
+                       WHERE client_id = ? AND external_id LIKE 'whatsapp:%' LIMIT 1""",
+                    (normalized_client_id,),
+                ).fetchone()
+                if existing_identity is not None and existing_identity["external_id"] != external_id:
+                    return "conflict"
 
             db.execute(
                 """
@@ -432,6 +583,7 @@ class SQLiteRepository:
         return {
             "client_id": client["client_id"],
             "full_name": client["full_name"],
+            "simulated": self.is_qa_simulated_client(client_id),
             "currency": balance.currency,
             "balance_cents": balance.amount_cents,
             "balance_status": balance.status,
@@ -547,6 +699,8 @@ class SQLiteRepository:
         external_id: str | None,
         direction: str,
         body: str,
+        *,
+        delivery_status: str | None = None,
     ) -> None:
         with self._connect() as db:
             db.execute(
@@ -561,6 +715,135 @@ class SQLiteRepository:
                     external_id,
                     direction,
                     body,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            if delivery_status:
+                db.execute(
+                    """
+                    INSERT OR IGNORE INTO message_delivery_statuses
+                    (message_id, status, provider_timestamp, received_at)
+                    VALUES (?, ?, NULL, ?)
+                    """,
+                    (message_id, delivery_status, datetime.now(UTC).isoformat()),
+                )
+
+    def record_message_status(
+        self,
+        message_id: str,
+        status: str,
+        provider_timestamp: str | None = None,
+        *,
+        recipient_id: str | None = None,
+        callback_data: str | None = None,
+    ) -> None:
+        """Persist the latest Meta delivery status, including if it races message recording."""
+        status_order = {"accepted": 0, "sent": 1, "delivered": 2, "read": 3, "failed": 3}
+        with self._connect() as db:
+            current = db.execute(
+                "SELECT status, provider_timestamp FROM message_delivery_statuses WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            if (
+                current
+                and status_order.get(current["status"], -1) > status_order.get(status, -1)
+            ):
+                return
+            if (
+                current
+                and current["status"] in {"read", "failed"}
+                and status != current["status"]
+            ):
+                return
+            if (
+                current
+                and current["provider_timestamp"] is not None
+                and provider_timestamp is not None
+            ):
+                try:
+                    if int(provider_timestamp) < int(current["provider_timestamp"]):
+                        return
+                except ValueError:
+                    pass
+            db.execute(
+                """
+                INSERT INTO message_delivery_statuses
+                (message_id, status, provider_timestamp, received_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(message_id) DO UPDATE SET
+                    status = excluded.status,
+                    provider_timestamp = excluded.provider_timestamp,
+                    received_at = excluded.received_at
+                """,
+                (message_id, status, provider_timestamp, datetime.now(UTC).isoformat()),
+            )
+            if (
+                status in {"sent", "delivered", "read"}
+                and recipient_id
+                and callback_data
+                and len(callback_data.encode("utf-8")) <= 512
+            ):
+                db.execute(
+                    """
+                    INSERT OR IGNORE INTO whatsapp_opening_contexts
+                    (message_id, external_id, callback_data, provider_timestamp, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        f"whatsapp:{recipient_id}",
+                        callback_data,
+                        provider_timestamp,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+
+    def consume_whatsapp_opening_context(self, external_id: str) -> str | None:
+        """Return the newest pending opening context and consume pending rows atomically."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """
+                SELECT message_id, callback_data
+                FROM whatsapp_opening_contexts
+                WHERE external_id = ? AND consumed_at IS NULL
+                ORDER BY CAST(provider_timestamp AS INTEGER) DESC, created_at DESC
+                LIMIT 1
+                """,
+                (external_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            db.execute(
+                """
+                UPDATE whatsapp_opening_contexts
+                SET consumed_at = ?
+                WHERE external_id = ? AND consumed_at IS NULL
+                """,
+                (datetime.now(UTC).isoformat(), external_id),
+            )
+            return str(row["callback_data"])
+
+    def record_whatsapp_opening_context(
+        self,
+        message_id: str,
+        recipient_id: str,
+        callback_data: str,
+        provider_timestamp: str | None = None,
+    ) -> None:
+        """Persist validated context for a template sent by the local helper script."""
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO whatsapp_opening_contexts
+                (message_id, external_id, callback_data, provider_timestamp, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    f"whatsapp:{recipient_id}",
+                    callback_data,
+                    provider_timestamp,
                     datetime.now(UTC).isoformat(),
                 ),
             )

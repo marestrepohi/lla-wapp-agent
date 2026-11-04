@@ -33,14 +33,17 @@ class AgentRuntime:
 
     async def handle(self, message: InboundMessage) -> AgentResponse:
         """Run the graph for one inbound message and convert its final state."""
+        graph_input: dict[str, Any] = {
+            "messages": [HumanMessage(content=message.text, id=message.message_id)],
+            "channel": message.channel,
+            "message_id": message.message_id,
+            "external_id": message.external_id,
+            "client_id": message.client_id,
+        }
+        if message.opening_context:
+            graph_input["opening_context"] = dict(message.opening_context)
         result = await self._graph.ainvoke(
-            {
-                "messages": [HumanMessage(content=message.text, id=message.message_id)],
-                "channel": message.channel,
-                "message_id": message.message_id,
-                "external_id": message.external_id,
-                "client_id": message.client_id,
-            },
+            graph_input,
             config={"configurable": {"thread_id": self.thread_id(message)}},
         )
         return self._response(result, message.message_id)

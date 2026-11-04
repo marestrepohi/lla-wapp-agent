@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 import sqlite3
 import uuid
-from datetime import date, timedelta
+import unicodedata
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from lla_agent.domain.models import AgentResponse, Balance, Intent, ToolCall
 from lla_agent.persistence.sqlite import ClientNotFoundError, SQLiteRepository, ToolError
@@ -55,6 +57,15 @@ ACCOUNT_DETAIL_QUESTION_TERMS = (
     "explícame",
     "explicame",
 )
+WEEKDAYS = {
+    "lunes": 0,
+    "martes": 1,
+    "miercoles": 2,
+    "jueves": 3,
+    "viernes": 4,
+    "sabado": 5,
+    "domingo": 6,
+}
 
 
 class CollectionsAgent:
@@ -110,8 +121,8 @@ class CollectionsAgent:
         if client_id is None:
             return AgentResponse(
                 "Esta conversación aún no está asociada a un perfil de cliente, así que no puedo consultar "
-                "datos de cuenta. En esta demo, quien administra el acceso debe vincularla a un cliente "
-                "de prueba. Mientras tanto, puedo ayudarte con preguntas generales.",
+                "datos de cuenta. Si quieres revisar una cuenta, puedo ayudarte con información general "
+                "mientras se valida el perfil.",
                 Intent.UNKNOWN,
             )
         try:
@@ -205,15 +216,24 @@ class CollectionsAgent:
         balance: Balance,
         intent: Intent,
         tool_calls: list[ToolCall],
+        *,
+        previous_amount_cents: int | None = None,
+        accept_bare_amount: bool = False,
+        parsed_terms: tuple[int | None, date | None] | None = None,
     ) -> AgentResponse:
-        amount, payment_date = self._extract_promise(text, balance.amount_cents)
+        amount, payment_date = parsed_terms or self.extract_payment_terms(
+            text,
+            balance.amount_cents,
+            previous_amount_cents=previous_amount_cents,
+            accept_bare_amount=accept_bare_amount,
+        )
         if amount is None or payment_date is None:
-            return AgentResponse(
-                f"Tu saldo registrado es {balance.amount_display}. Para preparar una propuesta, "
-                "dime qué monto puedes pagar y en qué fecha. Te la mostraré antes de registrarla.",
+            return self.negotiation_details_response(
+                balance,
                 intent,
-                tool_calls=tool_calls,
-                identity_validated=True,
+                tool_calls,
+                amount_cents=amount,
+                payment_date=payment_date,
             )
         try:
             self.repository.save_pending_promise(client_id, amount, payment_date)
@@ -240,6 +260,48 @@ class CollectionsAgent:
             f"Puedo proponer una promesa de pago por {balance.currency} {amount / 100:,.2f} "
             f"para el {payment_date:%d/%m/%Y}. Revísala y, si estás de acuerdo, responde exactamente "
             f"`{self._confirmation_command(amount, payment_date)}` para confirmarla.",
+            intent,
+            tool_calls=tool_calls
+            + [
+                ToolCall(
+                    "guardar_propuesta_pago",
+                    {
+                        "cliente_id": client_id,
+                        "monto": amount,
+                        "fecha_pago": payment_date.isoformat(),
+                    },
+                    "success",
+                )
+            ],
+            identity_validated=True,
+        )
+
+    @staticmethod
+    def negotiation_details_response(
+        balance: Balance,
+        intent: Intent,
+        tool_calls: list[ToolCall],
+        *,
+        amount_cents: int | None,
+        payment_date: date | None,
+    ) -> AgentResponse:
+        if amount_cents is not None and payment_date is None:
+            question = (
+                f"¿Qué día exacto te sirve para proponer el pago de "
+                f"{balance.currency} {amount_cents / 100:,.2f}?"
+            )
+        elif amount_cents is None and payment_date is not None:
+            question = (
+                f"¿Qué monto puedes pagar el {payment_date:%d/%m/%Y}? "
+                f"Tu saldo pendiente es {balance.amount_display}."
+            )
+        else:
+            question = (
+                f"Tu saldo registrado es {balance.amount_display}. Para preparar una propuesta, "
+                "dime qué monto puedes pagar y en qué fecha."
+            )
+        return AgentResponse(
+            question,
             intent,
             tool_calls=tool_calls,
             identity_validated=True,
@@ -272,8 +334,9 @@ class CollectionsAgent:
         amount, payment_date = pending
         if not self._is_explicit_confirmation(text, amount, payment_date):
             return AgentResponse(
-                "No registré la promesa porque la confirmación no coincide con la propuesta. "
-                f"Para continuar, copia este texto: `{self._confirmation_command(amount, payment_date)}`.",
+                f"Aún no registré la promesa de {amount / 100:,.2f} para el "
+                f"{payment_date:%d/%m/%Y}. Si estás de acuerdo, responde "
+                f"`{self._confirmation_command(amount, payment_date)}`.",
                 Intent.CONFIRM_PROMISE,
                 identity_validated=True,
             )
@@ -461,24 +524,87 @@ class CollectionsAgent:
         )
 
     @staticmethod
-    def _extract_promise(text: str, default_amount: int) -> tuple[int | None, date | None]:
-        amount_match = re.search(
-            r"(\d+(?:[.,]\d{1,2})?)\s*(?:balboas?|pab|usd|\$)", text.casefold()
+    def extract_payment_terms(
+        text: str,
+        default_amount: int,
+        *,
+        previous_amount_cents: int | None = None,
+        accept_bare_amount: bool = False,
+    ) -> tuple[int | None, date | None]:
+        normalized = unicodedata.normalize("NFKD", text.casefold())
+        normalized = "".join(
+            char for char in normalized if not unicodedata.combining(char)
         )
-        amount = default_amount if "todo" in text.casefold() or "total" in text.casefold() else None
+        amount_match = re.search(
+            r"(?:\b(?:balboas?|pab|usd)\s*|\$\s*)"
+            r"(?P<prefix_amount>[\d,]+(?:\.\d{1,2})?|\d+,\d{1,2})"
+            r"|(?P<suffix_amount>[\d,]+(?:\.\d{1,2})?|\d+,\d{1,2})"
+            r"\s*(?:balboas?|pab|usd|\$)",
+            normalized,
+        )
+        amount = (
+            default_amount
+            if "todo" in normalized or "total" in normalized
+            else previous_amount_cents
+        )
         if amount_match:
-            raw = amount_match.group(1).replace(",", ".")
+            raw = amount_match.group("prefix_amount") or amount_match.group("suffix_amount")
+            raw = raw.replace(",", "") if "." in raw else raw.replace(",", ".")
             amount = round(float(raw) * 100)
-        date_match = re.search(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", text)
+        elif accept_bare_amount:
+            bare_amount = re.search(
+                r"^\s*(?:(?:yo\s+)?(?:puedo|podria|mejor|serian|seria)\s+)*"
+                r"(?:(?:pagar|pago|abonar|abono|aportar)\s+)?"
+                r"(?P<amount>\d+(?:[.,]\d{1,2})?)(?=\s|$)",
+                normalized,
+            )
+            if bare_amount:
+                raw = bare_amount.group("amount").replace(",", ".")
+                amount = round(float(raw) * 100)
+
+        date_match = re.search(
+            r"(?P<year>20\d{2})[-/](?P<month>\d{1,2})[-/](?P<day>\d{1,2})"
+            r"|(?P<local_day>\d{1,2})[-/](?P<local_month>\d{1,2})[-/]"
+            r"(?P<local_year>20\d{2})",
+            normalized,
+        )
         if date_match:
-            payment_date = date(
-                int(date_match.group(1)), int(date_match.group(2)), int(date_match.group(3))
-            )
+            try:
+                if date_match.group("year"):
+                    year, month, day = (
+                        int(date_match.group("year")),
+                        int(date_match.group("month")),
+                        int(date_match.group("day")),
+                    )
+                else:
+                    year, month, day = (
+                        int(date_match.group("local_year")),
+                        int(date_match.group("local_month")),
+                        int(date_match.group("local_day")),
+                    )
+                payment_date = date(year, month, day)
+            except ValueError:
+                payment_date = None
         else:
-            relative = re.search(r"(\d+)\s*d[ií]as?", text.casefold())
-            payment_date = (
-                date.today() + timedelta(days=int(relative.group(1))) if relative else None
-            )
+            relative = re.search(r"(\d+)\s*dias?", normalized)
+            today = datetime.now(ZoneInfo("America/Bogota")).date()
+            if relative:
+                payment_date = today + timedelta(days=int(relative.group(1)))
+            elif re.search(r"\bpasado manana\b", normalized):
+                payment_date = today + timedelta(days=2)
+            elif re.search(r"\bmanana\b", normalized):
+                payment_date = today + timedelta(days=1)
+            elif re.search(r"\bhoy\b", normalized):
+                payment_date = today
+            else:
+                payment_date = None
+                for weekday_name, weekday in WEEKDAYS.items():
+                    if re.search(rf"\b{weekday_name}\b", normalized):
+                        days_ahead = (weekday - today.weekday()) % 7
+                        if days_ahead == 0 and "hoy" not in normalized:
+                            days_ahead = 7
+                        payment_date = today + timedelta(days=days_ahead)
+                        break
         return amount, payment_date
 
     def _resolve_client(

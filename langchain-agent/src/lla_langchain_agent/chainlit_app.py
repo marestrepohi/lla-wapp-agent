@@ -28,11 +28,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 APP_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(APP_DIR / ".env")
 
-VECTOR_STORE_PATH = APP_DIR / "chroma"
-CHECKPOINT_PATH = APP_DIR / "checkpoints.sqlite"
+STATE_DIR = Path(os.getenv("LLA_STATE_DIR", str(APP_DIR)))
+VECTOR_STORE_PATH = Path(os.getenv("LLA_VECTOR_STORE_PATH", str(STATE_DIR / "chroma")))
+CHECKPOINT_PATH = Path(
+    os.getenv("LLA_CHAINLIT_CHECKPOINT_PATH", str(STATE_DIR / "checkpoints.sqlite"))
+)
 DATABASE_PATH = Path(os.getenv("LLA_DB_PATH", str(PROJECT_ROOT / "data" / "collections.sqlite3")))
 MODEL_NAME = os.getenv("GROQ_MODEL", DEFAULT_MODEL)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+QA_ID_LINKING = os.getenv("WHATSAPP_QA_ID_LINKING", "false").strip().casefold() in {
+    "1", "true", "yes", "on"
+}
 _repository: SQLiteRepository | None = None
 _web_corpus = WebCorpus(VECTOR_STORE_PATH, EMBEDDING_MODEL)
 _runtime_context = None
@@ -60,6 +66,7 @@ async def on_app_startup() -> None:
         checkpoint_path=CHECKPOINT_PATH,
         model_name=MODEL_NAME,
         web_corpus=_web_corpus,
+        qa_id_linking=QA_ID_LINKING,
     )
     _agent_runtime = await _runtime_context.__aenter__()
 
@@ -126,7 +133,7 @@ async def _index_urls(urls: list[str], runtime: AgentRuntime) -> None:
         )
 
     async with cl.Step(name="3 · Embeddings / vectorización", type="run") as step:
-        step.input = f"Modelo local: {EMBEDDING_MODEL}"
+        step.input = f"Modelo local ONNX: {EMBEDDING_MODEL}"
         embeddings = await asyncio.to_thread(get_embeddings, EMBEDDING_MODEL)
         sample_vector = await asyncio.to_thread(embeddings.embed_query, chunks[0].page_content)
         sample_values = ", ".join(f"{value:.4f}" for value in sample_vector[:8])
@@ -171,8 +178,10 @@ async def on_chat_start() -> None:
         content=(
             "## Agente LLA\n\n"
             f"{context_status}\n\n"
-            "Para consultar el cliente mock `C001`, escribe `/cliente C001`. "
-            "La ingesta de páginas es opcional; puedes agregar hasta cinco URLs HTTPS en el chat."
+            "Puedes empezar a conversar directamente. Para probar una consulta de cuenta, "
+            "escribe tu ID en el chat; no necesitas seleccionar un cliente. En QA se crearán "
+            "datos ficticios si el ID no existe. El comando `/cliente C001` sigue disponible "
+            "como atajo opcional. La ingesta de páginas también es opcional."
         )
     ).send()
 
@@ -187,6 +196,13 @@ async def on_message(message: cl.Message) -> None:
             await cl.Message(content="No existe ese cliente en el SQLite mock.").send()
             return
         normalized_client_id = client_id.strip().upper()
+        external_id = str(cl.user_session.get("external_id") or "")
+        link_status = _repo().link_client_to_external_id(normalized_client_id, external_id)
+        if link_status == "conflict":
+            await cl.Message(
+                content="Esta sesión ya está asociada a otro perfil de prueba y no se puede cambiar desde el chat."
+            ).send()
+            return
         cl.user_session.set("client_id", normalized_client_id)
         await cl.Message(
             content=(

@@ -1,0 +1,79 @@
+services:
+  chainlit:
+    build:
+      context: .
+    env_file:
+      - ./langchain-agent/.env
+    environment: &agent-environment
+      LLA_STATE_DIR: /app/data
+      LLA_DB_PATH: /app/data/collections.sqlite3
+      FASTEMBED_CACHE_PATH: /app/data/fastembed
+    command:
+      - chainlit
+      - run
+      - chainlit_app.py
+      - --headless
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - agent-data:/app/data
+    restart: unless-stopped
+
+  whatsapp-webhook:
+    profiles: ["whatsapp"]
+    build:
+      context: .
+    env_file:
+      - ./langchain-agent/.env
+    environment:
+      <<: *agent-environment
+    command:
+      - uvicorn
+      - lla_langchain_agent.whatsapp_webhook:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - agent-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  ngrok:
+    profiles: ["whatsapp"]
+    image: ngrok/ngrok:latest
+    user: "0:0"
+    entrypoint: ["ngrok"]
+    command:
+      - http
+      - --config=/etc/ngrok.yml
+      - --log
+      - stdout
+      - whatsapp-webhook:8001
+    depends_on:
+      whatsapp-webhook:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ${NGROK_CONFIG_PATH:-${HOME}/.config/ngrok/ngrok.yml}
+        target: /etc/ngrok.yml
+        read_only: true
+    restart: unless-stopped
+
+volumes:
+  agent-data:

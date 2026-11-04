@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Arquitectura AWS de la rama aws-deployment contrastada con el assessment de AI Engineer: flujo actual, agente y brechas propuestas.">
+<title>Arquitectura AWS · Assessment AI Engineer</title>
+<style>
+:root{--paper:#f5f5f5;--ink:#2d3142;--muted:#4f5d75;--soft:#5a6580;--accent:#bf4520;--tint:rgba(191,69,32,.08);--link:#2e5aa8;--line:#aeb5c1;--pending:#717b8c;--white:#fff}
+*{box-sizing:border-box}html{background:var(--paper);color:var(--ink);scroll-behavior:smooth}body{margin:0;font:16px/1.52 "Geist",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--paper)}
+.page{max-width:1440px;margin:0 auto;padding:42px clamp(20px,4vw,64px) 64px}.eyebrow,.tag,.kicker,.svg-label,.legend{font-family:"Geist Mono",ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.045em}.eyebrow{font-size:12px;text-transform:uppercase;color:var(--muted);margin:0 0 12px}.hero{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:30px;align-items:end;border-bottom:1px solid #c7cbd2;padding-bottom:27px}.hero h1{font:normal clamp(38px,5.2vw,66px)/.98 "Instrument Serif",Georgia,serif;letter-spacing:-.025em;margin:0;max-width:900px}.hero p{max-width:850px;margin:17px 0 0;color:var(--muted);font-size:17px}.hero-note{border-left:3px solid var(--accent);padding:7px 0 7px 15px;color:var(--muted);font-size:13px}.hero-note strong{display:block;color:var(--ink);font-size:14px;margin-bottom:5px}.tag{display:inline-flex;align-items:center;gap:8px;font-size:11px;text-transform:uppercase;color:var(--muted);border:1px solid #c7cbd2;padding:5px 9px;border-radius:999px;margin-top:17px}.tag:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}
+h2{font:normal 32px/1.08 "Instrument Serif",Georgia,serif;letter-spacing:-.015em;margin:0 0 12px}h3{font-size:16px;line-height:1.25;margin:0 0 8px}.intro{padding:28px 0 10px}.intro>p{color:var(--muted);max-width:1000px;margin:0}.requirements{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:#d0d4db;border:1px solid #d0d4db;margin:19px 0 36px}.req{background:var(--paper);padding:14px 16px;min-height:105px}.req .kicker{font-size:10px;color:var(--accent);text-transform:uppercase}.req p{font-size:13px;line-height:1.4;color:var(--muted);margin:6px 0 0}.section-head{display:flex;justify-content:space-between;align-items:end;gap:24px;margin:38px 0 14px}.section-head p{font-size:13px;color:var(--muted);max-width:580px;margin:0}.panel{border:1px solid #c7cbd2;background:rgba(255,255,255,.22);margin:0 0 20px;padding:14px 16px 12px}.panel-top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:2px 4px 10px}.panel-top h3{font-size:14px;margin:0}.panel-top span{font:10px "Geist Mono",ui-monospace,monospace;text-transform:uppercase;color:var(--soft)}.svg-scroll{overflow-x:auto;overscroll-behavior-x:contain}.diagram{display:block;width:100%;min-width:1000px;height:auto}.caption{font-size:12px;color:var(--muted);margin:9px 4px 2px}.legend-row{display:flex;gap:18px;flex-wrap:wrap;margin:9px 4px 0;font-size:11px;color:var(--muted)}.legend{font-size:10px;display:inline-flex;align-items:center;gap:7px}.legend i{width:20px;height:12px;border:1px solid var(--ink);display:inline-block;border-radius:3px}.legend i.dash{border-style:dashed;border-color:var(--pending)}.legend i.external{border:1px dashed var(--accent);background:var(--tint)}
+.notes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:15px 0 0}.note{border-top:2px solid var(--ink);padding:12px 4px 0}.note.emphasis{border-color:var(--accent)}.note .kicker{font-size:10px;text-transform:uppercase;color:var(--soft)}.note p,.note li{font-size:13px;color:var(--muted);line-height:1.48}.note p{margin:7px 0 0}.note ul{padding-left:17px;margin:7px 0 0}.note li+li{margin-top:4px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:#d0d4db;border:1px solid #d0d4db;margin:15px 0 0}.metric{background:var(--paper);padding:14px 16px}.metric strong{display:block;font:normal 20px/1.15 "Instrument Serif",Georgia,serif}.metric p{font-size:12px;color:var(--muted);margin:6px 0 0}.callout{border-left:3px solid var(--accent);background:var(--tint);padding:13px 16px;margin:18px 0;color:var(--ink);font-size:13px}.source{margin-top:36px;padding-top:13px;border-top:1px solid #c7cbd2;color:var(--muted);font-size:11px}.source code{font:11px "Geist Mono",ui-monospace,monospace;color:var(--ink)}
+svg text{font-family:"Geist",Inter,ui-sans-serif,system-ui,sans-serif;fill:var(--ink)}svg .s-title{font:600 15px "Geist",Inter,system-ui,sans-serif}svg .s-sub{font:11px "Geist",Inter,system-ui,sans-serif;fill:var(--muted)}svg .s-micro{font:10px "Geist Mono",ui-monospace,monospace;fill:var(--soft);letter-spacing:.02em}svg .s-label{font:10px "Geist Mono",ui-monospace,monospace;fill:var(--muted)}svg .s-section{font:11px "Geist Mono",ui-monospace,monospace;fill:var(--soft);letter-spacing:.08em;text-transform:uppercase}svg .node{fill:#fbfbfb;stroke:#737d8d;stroke-width:1.35;rx:6}svg .node-accent{fill:var(--tint);stroke:var(--accent);stroke-width:1.6;rx:6}svg .node-pending{fill:#f9f9f9;stroke:var(--pending);stroke-width:1.4;stroke-dasharray:6 4;rx:6}svg .node-external{fill:var(--tint);stroke:var(--accent);stroke-width:1.4;stroke-dasharray:5 4;rx:6}svg .connector{fill:none;stroke:#657188;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow1)}svg .connector-both{fill:none;stroke:#657188;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;marker-start:url(#arrow3);marker-end:url(#arrow3)}svg .connector-pending{fill:none;stroke:#778194;stroke-width:1.5;stroke-dasharray:6 4;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow3)}svg .label-bg{fill:var(--paper)}svg .boundary{fill:none;stroke:#c7cbd2;stroke-width:1;stroke-dasharray:3 5}
+@media(max-width:900px){.hero{grid-template-columns:1fr}.hero-note{max-width:540px}.requirements{grid-template-columns:repeat(2,minmax(0,1fr))}.notes{grid-template-columns:repeat(2,minmax(0,1fr))}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.section-head{align-items:start;flex-direction:column;gap:8px}}
+@media(max-width:560px){.page{padding:28px 16px 42px}.hero h1{font-size:43px}.requirements,.notes,.metrics{grid-template-columns:1fr}.panel{padding:10px 8px}.panel-top{align-items:start;flex-direction:column;gap:4px}}
+@media print{html,body{background:#fff}.page{max-width:none;padding:15mm}.panel,.req,.metric{background:#fff}.svg-scroll{overflow:visible}.diagram{min-width:0;width:100%}.panel{break-inside:avoid}.section-head{break-after:avoid}.hero h1{font-size:44pt}}
+</style>
+</head>
+<body>
+<main class="page">
+<header class="hero">
+  <div>
+    <p class="eyebrow">Revisión de arquitectura · AI Engineer · Panamá</p>
+    <h1>Un agente de cobranza en WhatsApp, con límites visibles</h1>
+    <p>Lectura de la rama <code>aws-deployment</code> frente al assessment: qué existe en el demo, cómo trabaja el agente y qué falta para operar campañas de cobranza de forma gobernada.</p>
+    <span class="tag">Groq se conserva por la API disponible</span>
+  </div>
+  <aside class="hero-note"><strong>Alcance del dibujo</strong>La rama describe una demo AWS con datos sintéticos. Las líneas sólidas son componentes presentes en el código de esa rama; las punteadas son extensiones propuestas. Eso no certifica un despliegue productivo activo.</aside>
+</header>
+
+<section class="intro" aria-labelledby="req-title">
+  <h2 id="req-title">Qué debe responder la solución</h2>
+  <p>El assessment pide priorizar WhatsApp para contactar suscriptores residenciales y comerciales con pagos vencidos, explicar datos y sistemas fuente, acciones y límites del agente, gobierno de campañas, fallas posibles y valor medible.</p>
+  <div class="requirements">
+    <article class="req"><span class="kicker">01 · Datos</span><p>Quién está vencido, cuánto debe, qué mensaje corresponde y de qué sistema sale cada dato.</p></article>
+    <article class="req"><span class="kicker">02 · Agente</span><p>Razonamiento con herramientas, memoria acotada, acciones permitidas y escalamiento.</p></article>
+    <article class="req"><span class="kicker">03 · Gobierno</span><p>Autorizar campañas, consentimiento, horarios, límites de contacto y pausa global.</p></article>
+    <article class="req"><span class="kicker">04 · Resultado</span><p>Reducir mora y trabajo manual sin perder trazabilidad, control ni experiencia del cliente.</p></article>
+  </div>
+</section>
+
+<section aria-labelledby="current-title">
+  <div class="section-head"><div><p class="eyebrow">01 / Lo que implementa la rama</p><h2 id="current-title">Entrada, procesamiento y respuesta</h2></div><p>Webhook rápido y procesamiento asíncrono. La respuesta HTTP confirma que el mensaje se encoló; no confirma que el agente contestó ni que WhatsApp lo entregó.</p></div>
+  <figure class="panel">
+    <div class="panel-top"><h3>Flujo AWS actual · demo de la rama aws-deployment</h3><span>recorrido de un mensaje</span></div>
+    <div class="svg-scroll">
+      <svg class="diagram" viewBox="0 0 1280 650" role="img" aria-labelledby="flow-title flow-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="flow-title">Flujo actual del agente de cobranza por WhatsApp</title>
+        <desc id="flow-desc">Meta envía un webhook a API Gateway y a una Lambda de ingreso. Esta valida la firma, registra el mensaje en SQS FIFO y responde 200. Una Lambda worker ejecuta LangGraph, consulta Groq y DynamoDB y luego contesta por la API de WhatsApp. SQS mantiene una dead-letter queue y CloudWatch y SNS observan errores.</desc>
+        <defs><marker id="arrow1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#657188"/></marker></defs>
+        <text x="38" y="40" class="s-section">CANAL Y EJECUCIÓN ASÍNCRONA</text>
+        <path class="connector" d="M226 171H280"/><path class="connector" d="M465 171H514"/><path class="connector" d="M704 171H752"/><path class="connector" d="M944 171H996"/>
+        <path class="connector" d="M1070 235V297H618V389"/>
+        <path class="connector" d="M1174 235V362H133V235"/>
+        <path class="connector" d="M1220 235V416H1065V448"/>
+        <path class="connector" d="M1010 235V286H617V389"/>
+        <rect class="label-bg" x="324" y="151" width="97" height="18"/><text class="s-label" x="372" y="164" text-anchor="middle">POST webhook</text>
+        <rect class="label-bg" x="562" y="151" width="92" height="18"/><text class="s-label" x="608" y="164" text-anchor="middle">evento válido</text>
+        <rect class="label-bg" x="795" y="151" width="102" height="18"/><text class="s-label" x="846" y="164" text-anchor="middle">mensaje FIFO</text>
+        <rect class="label-bg" x="1004" y="269" width="100" height="18"/><text class="s-label" x="1054" y="282" text-anchor="middle">invoca agente</text>
+        <rect class="label-bg" x="700" y="262" width="108" height="18"/><text class="s-label" x="754" y="275" text-anchor="middle">inferencia API</text>
+        <rect class="label-bg" x="1080" y="390" width="128" height="18"/><text class="s-label" x="1144" y="403" text-anchor="middle">lectura / escritura</text>
+        <rect class="label-bg" x="443" y="334" width="108" height="18"/><text class="s-label" x="497" y="347" text-anchor="middle">respuesta a Meta</text>
+        <rect class="node" x="36" y="112" width="190" height="123"/>
+        <text class="s-micro" x="54" y="137">CANAL EXTERNO</text><text class="s-title" x="54" y="165">WhatsApp Cloud API</text><text class="s-sub" x="54" y="188">webhook y mensajes</text><text class="s-sub" x="54" y="207">Graph API de Meta</text>
+        <rect class="node" x="280" y="112" width="185" height="123"/>
+        <text class="s-micro" x="298" y="137">AWS · HTTPS</text><text class="s-title" x="298" y="165">API Gateway</text><text class="s-sub" x="298" y="188">HTTP API</text><text class="s-sub" x="298" y="207">ruta del webhook</text>
+        <rect class="node" x="514" y="112" width="190" height="123"/>
+        <text class="s-micro" x="532" y="137">AWS · LAMBDA</text><text class="s-title" x="532" y="165">Webhook de ingreso</text><text class="s-sub" x="532" y="188">verifica token / HMAC</text><text class="s-sub" x="532" y="207">deduplica por wamid</text>
+        <rect class="node" x="752" y="112" width="192" height="123"/>
+        <text class="s-micro" x="770" y="137">AWS · SQS FIFO</text><text class="s-title" x="770" y="165">Cola de entrada</text><text class="s-sub" x="770" y="188">orden por remitente</text><rect x="770" y="199" width="115" height="23" rx="4" fill="#f0f1f3" stroke="#c7cbd2"/><text class="s-micro" x="827" y="215" text-anchor="middle">DLQ · 14 días</text>
+        <rect class="node-accent" x="996" y="112" width="248" height="123"/>
+        <text class="s-micro" x="1014" y="137">AWS · LAMBDA WORKER</text><text class="s-title" x="1014" y="165">Agente LangGraph</text><text class="s-sub" x="1014" y="188">herramientas + estado</text><text class="s-sub" x="1014" y="207">concurrencia reservada: 2</text>
+        <rect class="node-external" x="493" y="389" width="248" height="115"/>
+        <text class="s-micro" x="511" y="414">INFERENCIA · EXTERNA A AWS</text><text class="s-title" x="511" y="443">Groq API</text><text class="s-sub" x="511" y="466">Qwen · voz y visión según tarea</text><text class="s-sub" x="511" y="486">se conserva por API disponible</text>
+        <rect class="node" x="865" y="448" width="200" height="130"/>
+        <text class="s-micro" x="883" y="473">AWS · DYNAMODB</text><text class="s-title" x="883" y="501">Tres tablas</text><text class="s-sub" x="883" y="524">cliente · conversación</text><text class="s-sub" x="883" y="544">checkpoint de LangGraph</text><text class="s-sub" x="883" y="563">TTL por tipo de registro</text>
+        <rect class="node" x="72" y="448" width="274" height="130"/>
+        <text class="s-micro" x="90" y="473">OPERACIÓN AWS</text><text class="s-title" x="90" y="501">CloudWatch + SNS</text><text class="s-sub" x="90" y="524">logs, filtros y alarma de errores</text><text class="s-sub" x="90" y="544">notificación cifrada con KMS</text><text class="s-sub" x="90" y="563">observabilidad de Lambda / cola</text>
+        <rect class="label-bg" x="380" y="584" width="474" height="35"/><text class="s-label" x="617" y="599" text-anchor="middle">200 al encolar ≠ respuesta del agente ≠ entrega / lectura de Meta</text><text class="s-micro" x="617" y="612" text-anchor="middle">El callback de estado de entrega aún no se procesa</text>
+        <text class="s-micro" x="38" y="638">SQS: lote 1 · visibilidad 720 s · reintentos y DLQ tras 5 recepciones fallidas. SEND_UNKNOWN requiere conciliación manual.</text>
+      </svg>
+    </div>
+    <figcaption class="caption">La firma HMAC protege el webhook entrante. La Lambda worker envía la respuesta a Meta; el ledger evita duplicar algunos envíos, pero un resultado ambiguo no se reintenta automáticamente.</figcaption>
+  </figure>
+  <div class="notes">
+    <article class="note"><span class="kicker">Fuente actual</span><p>DynamoDB contiene registros sintéticos de clientes y cobranza para el demo. No se encontró conexión operativa a facturación, CRM, pagos ni una cola de atención humana.</p></article>
+    <article class="note"><span class="kicker">Lo que acredita el código</span><p>La rama documenta el template SAM, validación/build/deploy y evidencia de un endpoint de demo. No acredita que la versión worker actual esté desplegada ni un recorrido extremo a extremo en producción.</p></article>
+    <article class="note emphasis"><span class="kicker">Límite del modelo elegido</span><p>Groq es la API disponible que elegiste y queda en el diseño. Es inferencia fuera de AWS: los componentes de infraestructura sí son AWS, pero la solución no es estrictamente “100 % AWS” si ese requisito también incluye el proveedor del modelo.</p></article>
+  </div>
+</section>
+
+<section aria-labelledby="agent-title">
+  <div class="section-head"><div><p class="eyebrow">02 / Dentro del agente</p><h2 id="agent-title">El modelo interpreta; las herramientas ponen límites</h2></div><p>El LLM no debe decidir el saldo ni ejecutar operaciones financieras por texto libre. El grafo combina contexto conversacional con acciones deterministas y estado persistente.</p></div>
+  <figure class="panel">
+    <div class="panel-top"><h3>Agente, fuentes de contexto y persistencia</h3><span>detalle de ejecución y memoria</span></div>
+    <div class="svg-scroll">
+      <svg class="diagram" viewBox="0 0 1280 650" role="img" aria-labelledby="agent-svg-title agent-svg-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="agent-svg-title">Interior del agente LangGraph y sus fuentes</title>
+        <desc id="agent-svg-desc">Un evento de SQS activa una Lambda que ejecuta LangGraph. El grafo usa Groq como API de modelo, herramientas deterministas de cobranza y tablas DynamoDB para registros y checkpoints. La búsqueda opcional usa FastEmbed local y Qdrant Cloud para contenido público indexado por un operador.</desc>
+        <defs><marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="#657188"/></marker></defs>
+        <text class="s-section" x="38" y="42">CONTROL DEL AGENTE</text>
+        <path class="connector" style="marker-end:url(#arrow2)" d="M226 183H277"/><path class="connector" style="marker-end:url(#arrow2)" d="M472 183H522"/><path class="connector" style="marker-end:url(#arrow2)" d="M807 160H913V145H963"/><path class="connector" style="marker-end:url(#arrow2)" d="M807 240H895V319H937"/><path class="connector" style="marker-end:url(#arrow2)" d="M1068 377V456"/><path class="connector" style="marker-end:url(#arrow2)" d="M807 286H849V485H877"/><path class="connector" style="marker-end:url(#arrow2)" d="M664 330V365"/><path class="connector" style="marker-end:url(#arrow2)" d="M522 285H450V470H650V492"/><path class="connector" style="marker-end:url(#arrow2)" d="M342 513H479"/>
+        <rect class="label-bg" x="325" y="163" width="96" height="18"/><text class="s-label" x="373" y="176" text-anchor="middle">evento válido</text>
+        <rect class="label-bg" x="842" y="119" width="92" height="18"/><text class="s-label" x="888" y="132" text-anchor="middle">razona / redacta</text>
+        <rect class="label-bg" x="812" y="213" width="78" height="18"/><text class="s-label" x="851" y="226" text-anchor="middle">acción segura</text>
+        <rect class="label-bg" x="1079" y="409" width="91" height="18"/><text class="s-label" x="1124" y="422" text-anchor="middle">lectura / escritura</text>
+        <rect class="label-bg" x="814" y="260" width="58" height="18"/><text class="s-label" x="843" y="273" text-anchor="middle">ledger</text>
+        <rect class="label-bg" x="672" y="338" width="57" height="18"/><text class="s-label" x="700" y="351" text-anchor="middle">estado</text>
+        <rect class="label-bg" x="344" y="391" width="96" height="18"/><text class="s-label" x="392" y="404" text-anchor="middle">vector search</text>
+        <rect class="label-bg" x="374" y="485" width="83" height="18"/><text class="s-label" x="415" y="498" text-anchor="middle">indexación</text>
+        <rect class="node" x="37" y="130" width="189" height="106"/><text class="s-micro" x="55" y="155">AWS · SQS FIFO</text><text class="s-title" x="55" y="184">Evento entrante</text><text class="s-sub" x="55" y="207">wamid + texto / adjunto</text>
+        <rect class="node" x="277" y="130" width="195" height="106"/><text class="s-micro" x="295" y="155">AWS · LAMBDA</text><text class="s-title" x="295" y="184">Worker</text><text class="s-sub" x="295" y="207">FastEmbed local, si aplica</text>
+        <rect class="node-accent" x="522" y="104" width="285" height="226"/><text class="s-micro" x="542" y="130">ORQUESTACIÓN</text><text class="s-title" x="542" y="161">LangGraph</text><text class="s-sub" x="542" y="187">1. clasifica intención y canal</text><text class="s-sub" x="542" y="210">2. reúne historial y contexto</text><text class="s-sub" x="542" y="233">3. usa herramienta permitida</text><text class="s-sub" x="542" y="256">4. redacta o escala</text><rect x="542" y="277" width="224" height="32" rx="4" fill="#fff" stroke="#d8b6aa"/><text class="s-micro" x="654" y="297" text-anchor="middle">límite: sin autoridad financiera</text>
+        <rect class="node-external" x="963" y="86" width="262" height="120"/><text class="s-micro" x="982" y="112">API EXTERNA · DECISIÓN CONSERVADA</text><text class="s-title" x="982" y="141">Groq · Qwen</text><text class="s-sub" x="982" y="165">chat, voz (Whisper) y visión</text><text class="s-sub" x="982" y="185">salida no confiable: validar</text>
+        <rect class="node" x="937" y="266" width="240" height="111"/><text class="s-micro" x="956" y="291">ACCIONES DETERMINISTAS</text><text class="s-title" x="956" y="320">Herramientas de negocio</text><text class="s-sub" x="956" y="344">consultar saldo · promesa · opt-out</text><text class="s-sub" x="956" y="363">escalar; reglas fuera del LLM</text>
+        <rect class="node" x="877" y="456" width="300" height="128"/><text class="s-micro" x="896" y="481">AWS · DYNAMODB</text><text class="s-title" x="896" y="510">Datos del demo</text><text class="s-sub" x="896" y="533">cliente/cobranza · ledger conversación</text><text class="s-sub" x="896" y="553">idempotencia · locks · TTL 90 días</text><text class="s-sub" x="896" y="572">datos mock; no son saldo contable real</text>
+        <rect class="node" x="479" y="492" width="310" height="112"/><text class="s-micro" x="498" y="517">QDRANT CLOUD · OPCIONAL</text><text class="s-title" x="498" y="546">RAG y memoria semántica</text><text class="s-sub" x="498" y="569">índice público / memoria por cliente</text><text class="s-sub" x="498" y="589">FastEmbed corre local; no usa embedding Groq</text>
+        <rect class="node" x="37" y="457" width="305" height="112"/><text class="s-micro" x="56" y="482">OPERACIÓN MANUAL · LOCAL</text><text class="s-title" x="56" y="511">Páginas públicas</text><text class="s-sub" x="56" y="534">script del operador indexa URLs</text><text class="s-sub" x="56" y="554">sin sincronización automática descrita</text>
+        <rect class="node" x="484" y="365" width="295" height="73"/><text class="s-micro" x="502" y="389">AWS · DYNAMODB · CHECKPOINTS</text><text class="s-title" x="502" y="416">Checkpoints de LangGraph</text><text class="s-sub" x="502" y="432">tabla separada · TTL 30 días</text>
+        <text class="s-micro" x="38" y="632">Acciones presentes: balance demo, registrar promesa, escalar, opt-out. El demo no cobra dinero ni actualiza un sistema real de facturación.</text>
+      </svg>
+    </div>
+    <figcaption class="caption">Qdrant es opcional y externo; sirve para páginas públicas y memoria semántica no financiera. El importador se ejecuta localmente. No usar la recuperación semántica como autoridad de deuda.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="target-title">
+  <div class="section-head"><div><p class="eyebrow">03 / Para completar la propuesta</p><h2 id="target-title">Gobernar campañas antes de ampliar el alcance</h2></div><p>El assessment requiere conectores y controles que la rama no implementa. Se muestran como ampliaciones punteadas, sin presentarlas como componentes ya construidos.</p></div>
+  <figure class="panel">
+    <div class="panel-top"><h3>Brechas y extensiones necesarias para una operación completa</h3><span>propuesta · no implementado en la rama</span></div>
+    <div class="svg-scroll">
+      <svg class="diagram" viewBox="0 0 1280 650" role="img" aria-labelledby="target-svg-title target-svg-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="target-svg-title">Extensiones propuestas para campaña gobernada de cobranza</title>
+        <desc id="target-svg-desc">La propuesta agrega una consola de campañas con aprobación y límites, un EventBridge Scheduler, integración real con facturación y CRM que incluye atención humana, y una cola de envío con Lambda sender. Los componentes existentes de webhook, SQS de entrada, worker, WhatsApp y Groq permanecen. Groq sigue siendo una dependencia externa por decisión del candidato.</desc>
+        <defs><marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#657188"/></marker></defs>
+        <text class="s-section" x="38" y="42">CAPA DE CAMPAÑA</text><text class="s-section" x="38" y="416">CANALES, AGENTE Y SISTEMAS FUENTE</text>
+        <path class="connector-pending" d="M273 184H346"/><path class="connector-pending" d="M544 184H602"/>
+        <path class="connector-pending" style="marker-start:url(#arrow3)" d="M622 386H576V440H303V453"/>
+        <path class="connector" d="M939 520H910V620H455V565"/><path class="connector" d="M560 506H606"/><path class="connector" d="M707 453V439"/>
+        <path class="connector-both" d="M622 370H303"/><path class="connector-pending" d="M700 317V294"/><path class="connector-pending" d="M854 220H920V435H1080V453"/><path class="connector" d="M854 405H900V579H939"/>
+        <rect class="label-bg" x="283" y="156" width="52" height="18"/><text class="s-label" x="309" y="169" text-anchor="middle">reglas</text>
+        <rect class="label-bg" x="548" y="156" width="50" height="18"/><text class="s-label" x="573" y="169" text-anchor="middle">activa</text>
+        <rect class="label-bg" x="562" y="480" width="46" height="18"/><text class="s-label" x="585" y="493" text-anchor="middle">evento</text>
+        <rect class="label-bg" x="714" y="414" width="104" height="18"/><text class="s-label" x="766" y="427" text-anchor="middle">procesa mensaje</text>
+        <rect class="label-bg" x="350" y="412" width="148" height="18"/><text class="s-label" x="424" y="425" text-anchor="middle">consulta / escala</text>
+        <rect class="label-bg" x="410" y="343" width="80" height="18"/><text class="s-label" x="450" y="356" text-anchor="middle">inferencia</text>
+        <rect class="label-bg" x="940" y="410" width="104" height="18"/><text class="s-label" x="992" y="423" text-anchor="middle">envío vía cola</text>
+        <rect class="label-bg" x="859" y="380" width="58" height="18"/><text class="s-label" x="888" y="393" text-anchor="middle">directo</text>
+        <rect class="label-bg" x="650" y="593" width="124" height="18"/><text class="s-label" x="712" y="606" text-anchor="middle">webhook entrante</text>
+        <rect class="node-pending" x="43" y="126" width="230" height="116"/><text class="s-micro" x="61" y="151">POR CONSTRUIR</text><text class="s-title" x="61" y="180">Control de campaña</text><text class="s-sub" x="61" y="203">aprobador · consentimiento</text><text class="s-sub" x="61" y="222">horario · frecuencia · pausa</text>
+        <rect class="node-pending" x="346" y="126" width="198" height="116"/><text class="s-micro" x="364" y="151">AWS · PROPUESTO</text><text class="s-title" x="364" y="180">EventBridge</text><text class="s-sub" x="364" y="203">Scheduler por campaña</text><text class="s-sub" x="364" y="222">cuotas y ventanas horarias</text>
+        <rect class="node-pending" x="602" y="126" width="252" height="168"/><text class="s-micro" x="620" y="151">AWS · PROPUESTO</text><text class="s-title" x="620" y="180">SQS de envíos</text><text class="s-sub" x="620" y="203">FIFO · control de tasa</text><text class="s-sub" x="620" y="226">DLQ + reintento seguro</text><text class="s-sub" x="620" y="249">Sender Lambda + plantillas</text><text class="s-sub" x="620" y="272">idempotencia / reconciliación</text>
+        <rect class="node-pending" x="43" y="453" width="260" height="145"/><text class="s-micro" x="61" y="478">POR INTEGRAR</text><text class="s-title" x="61" y="507">Facturación + CRM</text><text class="s-sub" x="61" y="530">saldo y elegibilidad como fuente</text><text class="s-sub" x="61" y="550">pagos, promesas y acuerdos</text><text class="s-sub" x="61" y="570">cola de agente humano / disputa</text><text class="s-sub" x="61" y="589">con permisos de lectura y escritura</text>
+        <rect class="node" x="353" y="453" width="207" height="112"/><text class="s-micro" x="371" y="478">AWS · ACTUAL</text><text class="s-title" x="371" y="507">API Gateway</text><text class="s-sub" x="371" y="530">+ Lambda webhook</text><text class="s-sub" x="371" y="550">verifica y encola</text>
+        <rect class="node" x="606" y="453" width="201" height="112"/><text class="s-micro" x="624" y="478">AWS · ACTUAL</text><text class="s-title" x="624" y="507">SQS de entrada</text><text class="s-sub" x="624" y="530">FIFO + DLQ</text><text class="s-sub" x="624" y="550">eventos de Meta</text>
+        <rect class="node-accent" x="622" y="317" width="232" height="122"/><text class="s-micro" x="640" y="342">AWS · ACTUAL EN LA RAMA</text><text class="s-title" x="640" y="371">Worker · LangGraph</text><text class="s-sub" x="640" y="394">herramientas, estado y ledger</text><text class="s-sub" x="640" y="416">sin conexión CRM productiva</text>
+        <rect class="node-external" x="43" y="317" width="260" height="112"/><text class="s-micro" x="61" y="342">API EXTERNA · ELECCIÓN ACTUAL</text><text class="s-title" x="61" y="371">Groq</text><text class="s-sub" x="61" y="394">se mantiene por disponibilidad</text><text class="s-sub" x="61" y="416">inferencia fuera de AWS</text>
+        <rect class="node" x="939" y="453" width="278" height="145"/><text class="s-micro" x="957" y="478">CANAL · ACTUAL</text><text class="s-title" x="957" y="507">WhatsApp Cloud API</text><text class="s-sub" x="957" y="530">webhook entrante → API Gateway</text><text class="s-sub" x="957" y="550">respuesta directa desde worker</text><text class="s-sub" x="957" y="570">sender propuesto pasa por cola</text><text class="s-sub" x="957" y="589">falta procesar callback de entrega</text>
+        <text class="s-micro" x="38" y="638">Las extensiones separan autorización de campaña, selección de deuda, conversación y envío para poder auditar y detener el contacto.</text>
+      </svg>
+    </div>
+    <div class="legend-row" aria-label="Leyenda del diagrama"><span class="legend"><i></i> Presente en el código de la rama</span><span class="legend"><i class="dash"></i> Extensión propuesta, no implementada</span><span class="legend"><i class="external"></i> Servicio externo actual</span></div>
+    <figcaption class="caption">El envío gobernado requeriría conectar la cola propuesta a la Lambda de envío y mover allí la salida de Meta. La rama actual responde directamente desde el worker.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="ops-title">
+  <div class="section-head"><div><p class="eyebrow">04 / Riesgos y valor</p><h2 id="ops-title">Medir recuperación sin perder control</h2></div><p>Primero acordar línea base y grupos de comparación. Una respuesta generada o un mensaje aceptado por Meta no equivalen a pago recuperado.</p></div>
+  <div class="notes">
+    <article class="note emphasis"><span class="kicker">Saldo equivocado</span><p><b>Riesgo:</b> la demo usa datos sintéticos. <b>Control:</b> leer saldo y estado desde facturación con frescura visible; no iniciar campañas si el dato está desactualizado o no concilia.</p></article>
+    <article class="note"><span class="kicker">Mensaje indebido o alucinación</span><p><b>Riesgo:</b> prometer condiciones o revelar datos. <b>Control:</b> acciones tipadas, plantilla aprobada, límites por intención, evaluación de conversaciones y escalamiento humano.</p></article>
+    <article class="note"><span class="kicker">Duplicado / entrega incierta</span><p><b>Riesgo:</b> reintentar tras un timeout puede duplicar el contacto. <b>Control:</b> idempotencia por wamid y campaña, callback de Meta, conciliación de SEND_UNKNOWN y cola de fallos.</p></article>
+    <article class="note"><span class="kicker">Consentimiento / frecuencia</span><p><b>Riesgo:</b> contacto fuera de regla o acoso por campañas repetidas. <b>Control:</b> elegibilidad auditable, opt-out efectivo, ventanas horarias, topes multicanal y botón de pausa global.</p></article>
+    <article class="note"><span class="kicker">Dependencia de proveedor</span><p><b>Riesgo:</b> indisponibilidad o cambio de política de Groq. <b>Control:</b> timeout, límites de reintento, degradación a atención humana, métricas de proveedor y revisión explícita del requisito AWS del assessment.</p></article>
+    <article class="note"><span class="kicker">Seguridad y privacidad</span><p><b>Control:</b> minimizar datos hacia el LLM, cifrar secretos y datos, IAM de mínimo privilegio, retención por propósito y auditoría de accesos y acciones.</p></article>
+  </div>
+  <div class="metrics" aria-label="Indicadores propuestos">
+    <article class="metric"><strong>Recuperación incremental</strong><p>Monto y tasa pagados frente a grupo de control, por segmento y antigüedad.</p></article>
+    <article class="metric"><strong>Promesa cumplida</strong><p>Conversión a promesa y pago dentro del plazo acordado.</p></article>
+    <article class="metric"><strong>Calidad del contacto</strong><p>Entrega confirmada, respuesta, opt-out, queja y contacto por cuenta.</p></article>
+    <article class="metric"><strong>Operación y riesgo</strong><p>Costo por recuperación, escalamiento humano, errores y saldo conciliado.</p></article>
+  </div>
+  <div class="callout"><b>Lectura frente al “100 % AWS”:</b> la rama usa AWS para API Gateway, Lambda, SQS, DynamoDB, CloudWatch, SNS, Secrets Manager y KMS. Groq (y Qdrant cuando se activa) son servicios externos. Se respeta la elección de Groq por disponibilidad de API; si el evaluador entiende “100 % AWS” como proveedor de inferencia incluido, esa brecha debe explicitarse en la presentación y validarse con quien evalúa. El assessment permite mocks para el prototipo y no exige un despliegue real en AWS.</div>
+  <p class="source">Base del análisis: template SAM, runtime y notas de despliegue de la rama <code>aws-deployment</code>; assessment <code>lla_candidato_assessment_AI_Engineer.pdf</code>. La rama se inspeccionó sin cambiar de checkout. Las capacidades dibujadas con borde discontinuo son propuestas y no se atribuyen al código actual.</p>
+</section>
+</main>
+</body>
+</html>

@@ -12,6 +12,7 @@ from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
 from langchain_core.documents import Document
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_groq import ChatGroq
 from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, Field
@@ -118,6 +119,7 @@ def prepare_memory_context(
     client_id: str,
     user_message: str,
     model_name: str,
+    model: BaseChatModel | None = None,
 ) -> str:
     """Extract a safe durable fact, then retrieve relevant memories for this turn."""
     prompt = (
@@ -133,7 +135,12 @@ def prepare_memory_context(
     )
 
     try:
-        analysis = _get_memory_analyzer(model_name).invoke(prompt)
+        analyzer = (
+            model.with_structured_output(MemoryAnalysis)
+            if model is not None
+            else _get_memory_analyzer(model_name)
+        )
+        analysis = analyzer.invoke(prompt)
         if analysis.is_important and analysis.formatted_memory:
             try:
                 memory.remember(

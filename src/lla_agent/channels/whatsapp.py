@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 from lla_agent.application.ports import ConversationRuntime
 from lla_agent.domain.models import AgentResponse, InboundMessage
@@ -13,6 +14,7 @@ class WhatsAppMessage:
     message_id: str
     sender_id: str
     text: str
+    opening_context: Mapping[str, str] | None = None
 
 
 class WhatsAppAdapter:
@@ -33,5 +35,6 @@ class WhatsAppAdapter:
                 external_id=f"whatsapp:{message.sender_id}",
                 client_id=client_id,
                 conversation_id=f"whatsapp:{message.sender_id}",
+                opening_context=message.opening_context,
             )
         )

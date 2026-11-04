@@ -16,15 +16,15 @@ from bs4 import BeautifulSoup
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from .embeddings import DEFAULT_EMBEDDING_MODEL, FastEmbedEmbeddings
 
 MAX_PAGES = 5
 MAX_HTML_BYTES = 2_000_000
 MAX_PAGE_CHARS = 100_000
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
-DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "lla_web_rag_demo"
 _LOGGER = logging.getLogger(__name__)
 
@@ -150,13 +150,9 @@ def split_documents(documents: list[Document]) -> list[Document]:
 
 
 @lru_cache(maxsize=1)
-def get_embeddings(model_name: str = DEFAULT_EMBEDDING_MODEL) -> HuggingFaceEmbeddings:
-    """Load one local Sentence Transformers model; no embedding API key is required."""
-    return HuggingFaceEmbeddings(
-        model_name=model_name,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
+def get_embeddings(model_name: str = DEFAULT_EMBEDDING_MODEL) -> FastEmbedEmbeddings:
+    """Return a cached FastEmbed CPU embedding adapter; no API key is required."""
+    return FastEmbedEmbeddings(model_name)
 
 
 class LazyLocalEmbeddings(Embeddings):
@@ -174,7 +170,7 @@ class LazyLocalEmbeddings(Embeddings):
 
 def index_documents(
     chunks: list[Document],
-    embeddings: HuggingFaceEmbeddings,
+    embeddings: Embeddings,
     persist_directory: str,
 ) -> tuple[Chroma, list[str]]:
     """Replace this demo collection and persist the new vectors locally in Chroma."""
@@ -217,7 +213,7 @@ class WebCorpus:
     def replace(
         self,
         chunks: list[Document],
-        embeddings: HuggingFaceEmbeddings,
+        embeddings: Embeddings,
     ) -> list[str]:
         """Replace the persisted collection and publish it to all runtime tools."""
         with self._lock:

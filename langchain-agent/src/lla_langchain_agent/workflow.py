@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from datetime import date
 from typing import Any, Literal
 from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
-from langchain_groq import ChatGroq
 from langgraph.graph import END, START, StateGraph
 
 from lla_agent.application.agent import CollectionsAgent
@@ -19,8 +19,10 @@ from lla_agent.persistence.sqlite import SQLiteRepository
 
 from .agent import DEFAULT_MODEL, build_agent
 from .memory import QdrantCustomerMemory, get_qdrant_memory, prepare_memory_context
+from .models import build_chat_model
 from .rag import WebCorpus
 from .state import LLAAgentState
+from .whatsapp_opening import classify_contact_confirmation
 
 BUSINESS_INTENTS = {
     Intent.BALANCE,
@@ -32,14 +34,25 @@ BUSINESS_INTENTS = {
 }
 _LOGGER = logging.getLogger(__name__)
 _EXPLICIT_CLIENT_ID = re.compile(
-    r"\b(?:mi\s+)?(?:id|identificaci[oó]n|n[uú]mero\s+(?:de|del)\s+cliente)"
+    r"\b(?:mi\s+)?(?:id|identificaci[oó]n|n[uú]mero)"
     r"(?:\s+(?:de|del)\s+cliente)?\s*(?:es|:|n[uú]mero)?\s*"
-    r"(?P<client_id>[A-Za-z0-9-]{3,20})\b",
+    r"(?:(?:el|la)\s+)?"
+    r"(?P<client_id>C[A-Z0-9]{2,15}|[0-9]{3,12})\b",
     re.IGNORECASE,
 )
-_BARE_CLIENT_ID = re.compile(r"(?:C[A-Z0-9]{2,15}|[0-9]{3,12})", re.IGNORECASE)
+_AWAITING_ID_REPLY = re.compile(
+    r"^(?:(?:s[ií]|claro|correcto|as[ií]\s+es|soy\s+yo|es|ser[ií]a)"
+    r"[\s,.:;-]*)?"
+    r"(?:(?:(?:mi\s+)?(?:id|identificaci[oó]n|n[uú]mero)"
+    r"(?:\s+(?:de|del)\s+cliente)?\s*(?:es|:)?)[\s,.:;-]*)?"
+    r"(?:(?:el|la)\s+)?(?:n[uú]mero\s+)?"
+    r"(?P<client_id>C[A-Z0-9]{2,15}|[0-9]{3,12})"
+    r"[\s.!?,]*(?:gracias)?[\s.!?]*$",
+    re.IGNORECASE,
+)
 SUMMARY_TRIGGER_MESSAGES = 20
 SUMMARY_RETAIN_MESSAGES = 8
+PAYMENT_DETAIL_STAGES = frozenset({"awaiting_details", "awaiting_amount", "awaiting_date"})
 _SUMMARY_UNSAFE_TERMS = re.compile(
     r"\b(?:nombre|tel[eé]fono|correo|direcci[oó]n|identificador|id|saldo|deuda|monto|dinero|"
     r"pago|pagar|pag[oó]|cuota|vencimiento|factura|cuenta|tarjeta|credencial|contrase[nñ]a|"
@@ -115,9 +128,11 @@ def _qa_client_id_claim(text: str, *, awaiting_client_id: bool) -> str | None:
     explicit = _EXPLICIT_CLIENT_ID.search(text)
     if explicit:
         return explicit.group("client_id").strip().upper()
-    normalized = text.strip()
-    if awaiting_client_id and _BARE_CLIENT_ID.fullmatch(normalized):
-        return normalized.upper()
+    if not awaiting_client_id:
+        return None
+    match = _AWAITING_ID_REPLY.fullmatch(text.strip())
+    if match:
+        return match.group("client_id").strip().upper()
     return None
 
 
@@ -179,6 +194,72 @@ def _safe_for_summary(text: str) -> bool:
     return True
 
 
+def _normalize_plain_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _looks_like_payment_details(text: str) -> bool:
+    amount, payment_date = CollectionsAgent.extract_payment_terms(
+        text, 0, accept_bare_amount=True
+    )
+    if (amount is not None and amount > 0) or payment_date is not None:
+        return True
+    normalized = _normalize_plain_text(text).strip(" .,!¿?;:")
+    return bool(
+        re.fullmatch(
+            r"(?:(?:para|en)\s+)?(?:la\s+)?"
+            r"(?:(?:otra|proxima|siguiente)\s+)?semana",
+            normalized,
+        )
+    )
+
+
+def _prior_assistant_text(messages: list[Any], current_message_id: str) -> str:
+    current_index = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if isinstance(messages[index], HumanMessage)
+            and getattr(messages[index], "id", None) == current_message_id
+        ),
+        len(messages),
+    )
+    for message in reversed(messages[:current_index]):
+        if isinstance(message, AIMessage) and not message.tool_calls:
+            return _message_content(message)
+    return ""
+
+
+def _recover_payment_stage(messages: list[Any], message_id: str) -> dict[str, Any]:
+    """Recover a partially completed legacy payment flow from the preceding reply."""
+    previous_reply = _prior_assistant_text(messages, message_id)
+    normalized = _normalize_plain_text(previous_reply)
+    if not previous_reply:
+        return {}
+
+    amount, payment_date = CollectionsAgent.extract_payment_terms(previous_reply, 0)
+    if amount and re.search(r"\bque dia exacto\b|\bdia exacto\b", normalized):
+        return {
+            "payment_flow_stage": "awaiting_date",
+            "pending_payment_amount_cents": amount,
+            "pending_payment_date": None,
+        }
+    if payment_date and re.search(r"\bque monto\b|\bque cantidad\b", normalized):
+        return {
+            "payment_flow_stage": "awaiting_amount",
+            "pending_payment_amount_cents": None,
+            "pending_payment_date": payment_date.isoformat(),
+        }
+    if re.search(r"\bmonto\b", normalized) and re.search(r"\bfecha\b", normalized):
+        return {
+            "payment_flow_stage": "awaiting_details",
+            "pending_payment_amount_cents": None,
+            "pending_payment_date": None,
+        }
+    return {}
+
+
 def _balance_from_state(state: LLAAgentState) -> Balance:
     value = state["balance"]
     due_value = value.get("due_date")
@@ -204,7 +285,7 @@ def build_workflow(
     """Build the root graph; its checkpointer owns the whole conversation thread."""
     collections = CollectionsAgent(repository)
     web_corpus = web_corpus or WebCorpus()
-    chat_model = model or ChatGroq(model=model_name, temperature=0)
+    chat_model = model or build_chat_model(model_name)
     knowledge_agent = build_agent(
         repository=repository,
         model_name=model_name,
@@ -212,11 +293,12 @@ def build_workflow(
         web_corpus=web_corpus,
     )
 
-    def is_qa_whatsapp(state: LLAAgentState) -> bool:
-        return (
-            qa_id_linking
-            and str(state.get("channel", "")) == "whatsapp"
-            and str(state.get("external_id", "")).startswith("whatsapp:")
+    def is_qa_identity_channel(state: LLAAgentState) -> bool:
+        channel = str(state.get("channel", ""))
+        external_id = str(state.get("external_id", ""))
+        return qa_id_linking and (
+            (channel == "whatsapp" and external_id.startswith("whatsapp:"))
+            or (channel == "chainlit" and external_id.startswith("chainlit:"))
         )
 
     def intake(state: LLAAgentState) -> dict[str, Any]:
@@ -226,53 +308,221 @@ def build_workflow(
         client_id = state.get("client_id")
         external_id = state.get("external_id")
 
-        if is_qa_whatsapp(state) and external_id:
+        opening_context = state.get("opening_context", {})
+        if not isinstance(opening_context, dict):
+            opening_context = {}
+        opening_name = str(opening_context.get("contact_name", "")).strip()
+        opening_stage = str(state.get("opening_stage", "") or "")
+        if (
+            opening_context.get("flow") == "contact_confirmation"
+            and not opening_stage
+        ):
+            opening_stage = "awaiting_contact_confirmation"
+
+        def turn_update(
+            resolved_id: str | None,
+            *,
+            route: str,
+            response: str = "",
+            stage: str | None = None,
+            awaiting_id: bool = False,
+            notice: str = "",
+            response_meta: dict[str, Any] | None = None,
+            tool_calls: list[ToolCall] | None = None,
+            balance: Balance | None = None,
+            billing_failed: bool = False,
+            identity_validated: bool = False,
+        ) -> dict[str, Any]:
+            recorded_id = collections.begin_turn(
+                text,
+                client_id=resolved_id,
+                external_id=external_id,
+                channel=channel,
+                message_id=message_id,
+            )
+            result: dict[str, Any] = {
+                "input_text": text,
+                "message_id": message_id,
+                "client_id": recorded_id,
+                "route": route,
+                "response_text": response,
+                "response_meta": response_meta or {},
+                "awaiting_client_id": awaiting_id,
+                "qa_profile_notice": notice,
+                "identity_validated": identity_validated,
+                "opted_out": False,
+                "escalated": False,
+                "tool_calls": [
+                    {"name": call.name, "arguments": call.arguments, "outcome": call.outcome}
+                    for call in (tool_calls or [])
+                ],
+                "balance": {},
+                "billing_failed": billing_failed,
+            }
+            if stage:
+                result["opening_stage"] = stage
+            if balance:
+                result["balance"] = {
+                    "cliente_id": balance.cliente_id,
+                    "amount_cents": balance.amount_cents,
+                    "currency": balance.currency,
+                    "due_date": balance.due_date.isoformat() if balance.due_date else None,
+                    "status": balance.status,
+                }
+            return result
+
+        def link_and_summarize(claimed_id: str, stage: str | None) -> dict[str, Any]:
+            linked_profile = repository.get_client_by_external_id(str(external_id))
+            existing_profile = repository.get_client(claimed_id)
+            if existing_profile is None and linked_profile is None:
+                try:
+                    repository.ensure_qa_client(claimed_id)
+                except (ValueError, sqlite3.Error):
+                    return turn_update(
+                        linked_profile["client_id"] if linked_profile else None,
+                        route="early_response",
+                        response=(
+                            "No pude ubicar ese ID. Revísalo y vuelve a enviarlo, por favor."
+                        ),
+                        stage="awaiting_client_id" if stage else None,
+                        awaiting_id=True,
+                    )
+
+            link_status = repository.link_client_to_external_id(claimed_id, str(external_id))
+            if link_status == "conflict":
+                resolved_id = str(linked_profile["client_id"]) if linked_profile else None
+            else:
+                resolved_id = claimed_id
+            if link_status == "conflict":
+                return turn_update(
+                    resolved_id,
+                    route="early_response",
+                    response=(
+                        "No pude asociar este número con ese ID. Revísalo o pide ayuda a un asesor."
+                    ),
+                    stage=stage or "complete",
+                )
+            if link_status not in {"linked", "already_linked"}:
+                return turn_update(
+                    None,
+                    route="early_response",
+                    response="No pude asociar ese ID. Revísalo e inténtalo de nuevo, por favor.",
+                    stage="awaiting_client_id" if stage else None,
+                    awaiting_id=True,
+                )
+
+            simulated = repository.is_qa_simulated_client(claimed_id)
+            balance, calls = collections.lookup_balance(claimed_id)
+            if balance is None:
+                response = collections.billing_failure_response(
+                    claimed_id, Intent.BALANCE, calls
+                )
+                overview = response.text
+            else:
+                response = collections.balance_response(balance, Intent.BALANCE, calls)
+                overview = response.text
+            greeting_name = opening_name or ""
+            greeting = f"Gracias, {greeting_name}. " if greeting_name else "Gracias. "
+            answer = f"{greeting}Ya ubiqué el registro {claimed_id}. {overview}"
+            notice = (
+                "Este expediente se generó para la prueba; sus importes son simulados."
+                if simulated
+                else ""
+            )
+            response = AgentResponse(
+                answer,
+                Intent.BALANCE,
+                tool_calls=response.tool_calls,
+                escalated=response.escalated,
+                identity_validated=True,
+            )
+            return turn_update(
+                claimed_id,
+                route="early_response",
+                response=answer,
+                stage="complete" if stage else None,
+                awaiting_id=False,
+                notice=notice,
+                response_meta=_response_metadata(response),
+                tool_calls=response.tool_calls,
+                balance=balance,
+                billing_failed=balance is None,
+                identity_validated=True,
+            )
+
+        if opening_stage == "contact_mismatch":
+            return turn_update(
+                client_id,
+                route="early_response",
+                response=(
+                    "Entendido. No consultaré ni compartiré información de cuenta por este número."
+                ),
+                stage="contact_mismatch",
+            )
+
+        if is_qa_identity_channel(state) and external_id and opening_stage in {
+            "awaiting_contact_confirmation",
+            "awaiting_client_id",
+        }:
+            if opening_stage == "awaiting_contact_confirmation":
+                confirmation = classify_contact_confirmation(text, opening_name)
+                if confirmation == "no":
+                    return turn_update(
+                        client_id,
+                        route="early_response",
+                        response=(
+                            "Disculpa la molestia. No consultaré ni compartiré datos de cuenta "
+                            "por este número. Gracias por avisarme."
+                        ),
+                        stage="contact_mismatch",
+                    )
+                if confirmation == "yes":
+                    claimed_id = _qa_client_id_claim(text, awaiting_client_id=True)
+                    if claimed_id:
+                        return link_and_summarize(claimed_id, "complete")
+                    name = f" {opening_name}" if opening_name else ""
+                    return turn_update(
+                        client_id,
+                        route="early_response",
+                        response=(
+                            f"Gracias{name}. Para ubicar el expediente correcto, ¿me compartes "
+                            "tu ID de cliente?"
+                        ),
+                        stage="awaiting_client_id",
+                        awaiting_id=True,
+                    )
+                name = f" {opening_name}" if opening_name else ""
+                return turn_update(
+                    client_id,
+                    route="early_response",
+                    response=(
+                        "Hola, soy el asistente virtual de LLA. Te escribo por una consulta de "
+                        f"servicio. ¿Hablo con{name}?"
+                    ),
+                    stage="awaiting_contact_confirmation",
+                )
+
+            claimed_id = _qa_client_id_claim(text, awaiting_client_id=True)
+            if claimed_id:
+                return link_and_summarize(claimed_id, "complete")
+            return turn_update(
+                client_id,
+                route="early_response",
+                response="Cuando puedas, compárteme tu ID de cliente y reviso el estado de la cuenta.",
+                stage="awaiting_client_id",
+                awaiting_id=True,
+            )
+
+        if is_qa_identity_channel(state) and external_id:
             claimed_id = _qa_client_id_claim(
-                text, awaiting_client_id=bool(state.get("awaiting_client_id", False))
+                text,
+                awaiting_client_id=(
+                    bool(state.get("awaiting_client_id", False))
+                    or repository.get_client_by_external_id(external_id) is None
+                ),
             )
             if claimed_id:
-                link_status = repository.link_client_to_external_id(claimed_id, external_id)
-                resolved_id = collections.begin_turn(
-                    text,
-                    client_id=client_id,
-                    external_id=external_id,
-                    channel=channel,
-                    message_id=message_id,
-                )
-                if link_status in {"linked", "already_linked"}:
-                    reply = (
-                        f"Listo. En esta demo asocié este WhatsApp al perfil de prueba "
-                        f"{claimed_id}. Ya puedes consultar sus datos ficticios."
-                    )
-                    awaiting = False
-                elif link_status == "conflict":
-                    reply = (
-                        "Este WhatsApp ya está asociado a otro perfil de prueba y no puedo "
-                        "cambiarlo desde el chat. Quien administra la demo puede borrar la "
-                        "asociación local y volver a intentarlo."
-                    )
-                    awaiting = False
-                else:
-                    reply = (
-                        f"No encontré el perfil de prueba {claimed_id}. Puedes intentar con "
-                        "1234, 5678 o 9012, o con uno de los perfiles C001, C002 y C003."
-                    )
-                    awaiting = True
-                return {
-                    "input_text": text,
-                    "message_id": message_id,
-                    "client_id": resolved_id,
-                    "route": "early_response",
-                    "response_text": reply,
-                    "response_meta": {"intent": Intent.UNKNOWN.value},
-                    "awaiting_client_id": awaiting,
-                    "identity_validated": False,
-                    "opted_out": False,
-                    "escalated": False,
-                    "tool_calls": [],
-                    "balance": {},
-                    "billing_failed": False,
-                }
+                return link_and_summarize(claimed_id, opening_stage or None)
 
         resolved_id = collections.begin_turn(
             text,
@@ -281,6 +531,16 @@ def build_workflow(
             channel=channel,
             message_id=message_id,
         )
+        payment_stage = str(state.get("payment_flow_stage", "") or "")
+        payment_amount = state.get("pending_payment_amount_cents")
+        payment_date = state.get("pending_payment_date")
+        if not payment_stage:
+            recovered = _recover_payment_stage(
+                list(state.get("messages", [])), message_id
+            )
+            payment_stage = str(recovered.get("payment_flow_stage", ""))
+            payment_amount = recovered.get("pending_payment_amount_cents")
+            payment_date = recovered.get("pending_payment_date")
         return {
             "input_text": text,
             "message_id": message_id,
@@ -288,12 +548,16 @@ def build_workflow(
             "route": "opt_out",
             "response_text": "",
             "response_meta": {},
+            "qa_profile_notice": "",
             "identity_validated": False,
             "opted_out": False,
             "escalated": False,
             "tool_calls": [],
             "balance": {},
             "billing_failed": False,
+            "payment_flow_stage": payment_stage,
+            "pending_payment_amount_cents": payment_amount,
+            "pending_payment_date": payment_date,
         }
 
     def opt_out_gate(state: LLAAgentState) -> dict[str, Any]:
@@ -310,6 +574,9 @@ def build_workflow(
                 "response_meta": metadata,
                 "opted_out": response.opted_out,
                 "identity_validated": response.identity_validated,
+                "payment_flow_stage": "",
+                "pending_payment_amount_cents": None,
+                "pending_payment_date": None,
             }
         if state.get("route") == "early_response":
             return {}
@@ -319,23 +586,36 @@ def build_workflow(
         return "finalize" if state.get("route") == "early_response" else "classify_intent"
 
     def classify_intent(state: LLAAgentState) -> dict[str, Any]:
-        intent = collections.classify_intent(
-            str(state.get("input_text", "")), state.get("client_id")
-        )
+        text = str(state.get("input_text", ""))
+        intent = collections.classify_intent(text, state.get("client_id"))
+        stage = str(state.get("payment_flow_stage", "") or "")
+        if stage in PAYMENT_DETAIL_STAGES and intent == Intent.UNKNOWN:
+            if _looks_like_payment_details(text):
+                intent = Intent.NEGOTIATE
+        if stage == "awaiting_confirmation" and intent == Intent.UNKNOWN:
+            normalized = _normalize_plain_text(text).strip(" .,!¿?;:")
+            if normalized in {"si", "claro", "de acuerdo", "acepto", "confirmo", "ok", "dale"}:
+                intent = Intent.CONFIRM_PROMISE
         route = "business" if intent in BUSINESS_INTENTS else "knowledge"
-        return {"intent": intent.value, "route": route}
+        update: dict[str, Any] = {"intent": intent.value, "route": route}
+        if intent not in {Intent.NEGOTIATE, Intent.CONFIRM_PROMISE}:
+            update.update(
+                {
+                    "payment_flow_stage": "",
+                    "pending_payment_amount_cents": None,
+                    "pending_payment_date": None,
+                }
+            )
+        return update
 
     def route_after_intent(state: LLAAgentState) -> Literal["identity_gate", "prepare_memory"]:
         return "identity_gate" if state.get("route") == "business" else "prepare_memory"
 
     def identity_gate(state: LLAAgentState) -> dict[str, Any]:
-        if is_qa_whatsapp(state) and state.get("client_id") is None:
+        if is_qa_identity_channel(state) and state.get("client_id") is None:
             return {
                 "route": "blocked",
-                "response_text": (
-                    "Para consultar un perfil en esta demo, dime tu ID de cliente. "
-                    "Puedes probar 1234, 5678 o 9012. Esta asociación solo sirve para QA."
-                ),
+                "response_text": "Claro. Para ubicar tu expediente, ¿me compartes tu ID de cliente?",
                 "response_meta": {"intent": Intent.UNKNOWN.value},
                 "awaiting_client_id": True,
             }
@@ -401,20 +681,68 @@ def build_workflow(
         return {"response_text": response.text, "response_meta": _response_metadata(response)}
 
     def prepare_promise(state: LLAAgentState) -> dict[str, Any]:
+        text = str(state.get("input_text", ""))
+        balance = _balance_from_state(state)
+        stage = str(state.get("payment_flow_stage", "") or "")
+        previous_amount = state.get("pending_payment_amount_cents")
+        previous_date_value = state.get("pending_payment_date")
+        terms = CollectionsAgent.extract_payment_terms(
+            text,
+            balance.amount_cents,
+            previous_amount_cents=(
+                int(previous_amount) if previous_amount is not None else None
+            ),
+            accept_bare_amount=True,
+        )
+        amount, payment_date = terms
+        if payment_date is None and previous_date_value:
+            try:
+                payment_date = date.fromisoformat(str(previous_date_value))
+            except ValueError:
+                payment_date = None
+        terms = (amount, payment_date)
         response = collections.negotiation_response(
-            str(state.get("input_text", "")),
+            text,
             str(state["client_id"]),
-            _balance_from_state(state),
+            balance,
             Intent(str(state["intent"])),
             _tool_calls(state),
+            parsed_terms=terms,
         )
-        return {"response_text": response.text, "response_meta": _response_metadata(response)}
+        stage_update = "awaiting_details"
+        if amount is not None and payment_date is None:
+            stage_update = "awaiting_date"
+        elif amount is None and payment_date is not None:
+            stage_update = "awaiting_amount"
+        elif amount is not None and payment_date is not None:
+            proposal_saved = any(
+                call.name == "guardar_propuesta_pago" and call.outcome == "success"
+                for call in response.tool_calls
+            )
+            stage_update = "awaiting_confirmation" if proposal_saved else ""
+        return {
+            "response_text": response.text,
+            "response_meta": _response_metadata(response),
+            "payment_flow_stage": stage_update,
+            "pending_payment_amount_cents": amount,
+            "pending_payment_date": payment_date.isoformat() if payment_date else None,
+        }
 
     def confirm_promise(state: LLAAgentState) -> dict[str, Any]:
         response = collections.confirm_promise_response(
             str(state["client_id"]), str(state.get("input_text", ""))
         )
-        return {"response_text": response.text, "response_meta": _response_metadata(response)}
+        confirmed = any(
+            call.name == "registrar_promesa_pago" and call.outcome == "success"
+            for call in response.tool_calls
+        )
+        return {
+            "response_text": response.text,
+            "response_meta": _response_metadata(response),
+            "payment_flow_stage": "" if confirmed else state.get("payment_flow_stage", ""),
+            "pending_payment_amount_cents": None if confirmed else state.get("pending_payment_amount_cents"),
+            "pending_payment_date": None if confirmed else state.get("pending_payment_date"),
+        }
 
     def escalate(state: LLAAgentState) -> dict[str, Any]:
         intent = Intent(str(state["intent"]))
@@ -468,6 +796,7 @@ def build_workflow(
             client_id=client_id,
             user_message=str(state.get("input_text", "")),
             model_name=model_name,
+            model=chat_model,
         )
         return {"memory_context": context}
 
@@ -485,6 +814,10 @@ def build_workflow(
                     break
         if not answer:
             answer = "No pude generar una respuesta. Un asesor puede ayudarte."
+
+        qa_notice = str(state.get("qa_profile_notice", "") or "").strip()
+        if qa_notice:
+            answer = f"{qa_notice}\n\n{answer}"
 
         meta = state.get("response_meta", {})
         intent_value = str(meta.get("intent", state.get("intent", Intent.UNKNOWN.value)))
@@ -542,9 +875,20 @@ def build_workflow(
             for message in older_messages
             if _safe_for_summary(_message_content(message))
         ]
+        removals = [RemoveMessage(id=message.id) for message in older_messages]
+        if str(state.get("channel", "")) == "whatsapp":
+            # A WhatsApp reply must not wait on a second Groq call for history maintenance.
+            deterministic_lines = [
+                f"{'Cliente' if isinstance(message, HumanMessage) else 'Asistente'}: "
+                f"{_message_content(message).strip()}"
+                for message in safe_messages[-6:]
+            ]
+            summary_parts = [prior_summary, *deterministic_lines]
+            summary = "\n".join(part for part in summary_parts if part)[-1200:]
+            return {"summary": summary, "messages": removals}
         if not safe_messages:
             update: dict[str, Any] = {
-                "messages": [RemoveMessage(id=message.id) for message in older_messages]
+                "messages": removals
             }
             if not prior_summary_is_safe:
                 update["summary"] = ""
@@ -574,7 +918,6 @@ def build_workflow(
         if not summary or not _safe_for_summary(summary):
             _LOGGER.warning("Conversation summary rejected by the local safety filter")
             return {"summary": ""} if not prior_summary_is_safe else {}
-        removals = [RemoveMessage(id=message.id) for message in older_messages]
         return {"summary": summary, "messages": removals}
 
     builder = StateGraph(LLAAgentState)

@@ -12,6 +12,7 @@ from lla_agent.channels.telegram import build_application
 from lla_agent.persistence.sqlite import SQLiteRepository
 
 from .agent import DEFAULT_MODEL
+from .models import chat_credentials_available
 from .runtime import open_runtime
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -20,8 +21,10 @@ load_dotenv(APP_DIR / ".env")
 
 
 async def run() -> None:
-    if not os.getenv("GROQ_API_KEY"):
-        raise RuntimeError(f"Configura GROQ_API_KEY en {APP_DIR / '.env'} o en el entorno.")
+    if not chat_credentials_available():
+        raise RuntimeError(
+            f"Configura GROQ_API_KEY en {APP_DIR / '.env'} o en el entorno."
+        )
     if not os.getenv("TELEGRAM_BOT_TOKEN"):
         raise RuntimeError("Define TELEGRAM_BOT_TOKEN fuera del código fuente.")
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Mapping
 
 
 class Intent(StrEnum):
@@ -66,6 +67,7 @@ class InboundMessage:
     external_id: str | None
     client_id: str | None
     conversation_id: str
+    opening_context: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True)

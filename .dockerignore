@@ -1,0 +1,15 @@
+.git
+.worktrees
+.venv
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/.env.*
+**/*.sqlite*
+**/data
+**/chroma
+**/.aws-sam
+**/env.example.json
+**/.pytest_cache
+**/.ruff_cache

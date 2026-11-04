@@ -21,6 +21,7 @@ class LLAAgentState(AgentState, total=False):
     response_meta: dict[str, Any]
     identity_validated: bool
     awaiting_client_id: bool
+    qa_profile_notice: str
     opted_out: bool
     escalated: bool
     balance: dict[str, Any]
@@ -28,3 +29,8 @@ class LLAAgentState(AgentState, total=False):
     tool_calls: list[dict[str, Any]]
     memory_context: str
     summary: str
+    opening_context: dict[str, str]
+    opening_stage: str
+    payment_flow_stage: str
+    pending_payment_amount_cents: int | None
+    pending_payment_date: str | None

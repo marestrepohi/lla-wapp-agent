@@ -1,4 +1,4 @@
-"""Interactive local chat using one Groq-backed runtime for the process."""
+"""Interactive local chat using the configured shared agent runtime."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from lla_agent.persistence.sqlite import SQLiteRepository
 
 from .agent import DEFAULT_MODEL
 from .memory import qdrant_memory_configured
+from .models import chat_credentials_available
 from .runtime import open_runtime
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -23,7 +24,7 @@ load_dotenv(APP_DIR / ".env")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Chat local con el agente LLA y Groq")
+    parser = argparse.ArgumentParser(description="Chat local con el agente LLA")
     parser.add_argument(
         "--client-id",
         required=True,
@@ -36,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=os.getenv("GROQ_MODEL", DEFAULT_MODEL),
-        help=f"Modelo Groq (por defecto: {DEFAULT_MODEL})",
+        help=f"Modelo Groq de respaldo (por defecto: {DEFAULT_MODEL})",
     )
     parser.add_argument(
         "--db-path",
@@ -52,9 +53,9 @@ def parse_args() -> argparse.Namespace:
 
 
 async def run_chat(args: argparse.Namespace) -> None:
-    if not os.getenv("GROQ_API_KEY"):
+    if not chat_credentials_available():
         raise SystemExit(
-            f"No se encontró GROQ_API_KEY. Configúrala en {APP_DIR / '.env'} o en el entorno."
+            f"Configura GROQ_API_KEY en {APP_DIR / '.env'} o en el entorno."
         )
 
     database_path = Path(args.db_path)

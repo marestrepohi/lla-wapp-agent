@@ -6,19 +6,17 @@ requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.12,<5",
     "chainlit>=2,<3",
+    "fastembed>=0.7,<1",
     "langchain>=1.0,<2",
     "langchain-chroma>=0.2,<2",
-    "langchain-core>=1.0,<2",
+    "langchain-core>=1.5.2,<2",
     "langchain-groq>=0.3,<2",
-    "langchain-huggingface>=0.1,<2",
     "langchain-qdrant>=0.2,<2",
     "langchain-text-splitters>=1,<2",
     "langgraph>=1,<2",
     "langgraph-checkpoint-sqlite>=2,<4",
     "python-dotenv>=1,<2",
     "requests>=2.32,<3",
-    "sentence-transformers>=3.3.1,<6",
-    "torch>=2.0",
     "lla-wapp-agent==0.1.0",
 ]
 
@@ -29,12 +27,6 @@ dev = ["pytest>=8,<9", "ruff>=0.8,<1"]
 
 [tool.uv.sources]
 lla-wapp-agent = { path = "..", editable = true }
-torch = { index = "pytorch-cpu" }
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [build-system]
 requires = ["hatchling>=1.25"]

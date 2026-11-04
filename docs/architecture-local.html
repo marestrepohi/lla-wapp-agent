@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arquitectura local del agente WhatsApp</title>
+  <link href="https://fonts.googleapis.com/css2?family=Arimo:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --paper: #fafaf7;
+      --paper-2: #f6f8f9;
+      --ink: #1a1a1a;
+      --muted: #63666a;
+      --soft: #4b5563;
+      --accent: #b54708;
+      --link: #004c93;
+      --font-title: 'Arimo', Arial, sans-serif;
+      --font-sans: 'Open Sans', Arial, sans-serif;
+      --font-mono: 'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      min-height: 100vh;
+      padding: 36px 24px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--font-sans);
+    }
+    .frame { width: 100%; max-width: 1360px; margin: 0 auto; }
+    .eyebrow {
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin-bottom: 10px;
+      color: var(--ink);
+      font-family: var(--font-title);
+      font-size: 32px;
+      font-weight: 400;
+      line-height: 1.2;
+    }
+    .intro {
+      max-width: 840px;
+      margin-bottom: 24px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { display: block; width: 100%; min-width: 1280px; }
+    .receipt {
+      max-width: 1000px;
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .receipt a { color: var(--link); }
+    @media print {
+      body { padding: 12px; }
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <p class="eyebrow">Vista actual · ejecución local</p>
+    <h1>Agente de cobranza por WhatsApp</h1>
+    <p class="intro">Meta entrega cada mensaje al webhook local por ngrok. FastAPI y Chainlit usan el mismo diseño de runtime LangGraph: las operaciones de cuenta consultan SQLite, las preguntas generales pueden usar Groq y el RAG consulta páginas públicas indexadas en Chroma. Qdrant es opcional y conserva recuerdos no financieros.</p>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-local-title architecture-local-desc">
+        <title id="architecture-local-title">Arquitectura local del agente WhatsApp</title>
+        <desc id="architecture-local-desc">Diagrama de los mensajes de WhatsApp que pasan por Meta y ngrok hasta el webhook y LangGraph local, con datos en SQLite, RAG en Chroma y servicios opcionales de Groq y Qdrant.</desc>
+        <defs>
+          <marker id="architecture-local-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#63666a"/></marker>
+          <marker id="architecture-local-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#b54708"/></marker>
+          <marker id="architecture-local-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#004c93"/></marker>
+        </defs>
+        <rect width="1280" height="720" fill="#fafaf7"/>
+
+        <!-- Three flat zones: Meta, Docker Compose on the developer machine, hosted providers. -->
+        <rect x="40" y="120" width="360" height="448" rx="8" fill="rgba(26,26,26,0.02)" stroke="rgba(26,26,26,0.12)" stroke-width="0.8"/>
+        <rect x="412" y="120" width="596" height="448" rx="8" fill="rgba(26,26,26,0.02)" stroke="rgba(26,26,26,0.12)" stroke-width="0.8"/>
+        <rect x="1024" y="120" width="224" height="448" rx="8" fill="rgba(26,26,26,0.02)" stroke="rgba(26,26,26,0.12)" stroke-width="0.8"/>
+        <rect x="52" y="124" width="40" height="14" rx="2" fill="#fafaf7"/>
+        <text x="72" y="135" fill="#4b5563" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.12em">META</text>
+        <rect x="424" y="124" width="92" height="14" rx="2" fill="#fafaf7"/>
+        <text x="470" y="135" fill="#4b5563" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.10em">DOCKER COMPOSE</text>
+        <rect x="1036" y="124" width="68" height="14" rx="2" fill="#fafaf7"/>
+        <text x="1070" y="135" fill="#4b5563" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.10em">CLOUD APIS</text>
+
+        <!-- Message intake, outbound reply, and local agent paths. -->
+        <line x1="192" y1="264" x2="248" y2="264" stroke="#004c93" stroke-width="1.2" marker-end="url(#architecture-local-arrow-link)"/>
+        <line x1="398" y1="252" x2="436" y2="252" stroke="#004c93" stroke-width="1.2" marker-end="url(#architecture-local-arrow-link)"/>
+        <line x1="568" y1="276" x2="600" y2="276" stroke="#63666a" stroke-width="1.2" marker-end="url(#architecture-local-arrow)"/>
+        <line x1="760" y1="252" x2="800" y2="252" stroke="#b54708" stroke-width="1.4" marker-end="url(#architecture-local-arrow-accent)"/>
+        <line x1="972" y1="264" x2="1048" y2="264" stroke="#004c93" stroke-width="1.2" marker-end="url(#architecture-local-arrow-link)"/>
+        <line x1="680" y1="296" x2="680" y2="424" stroke="#63666a" stroke-width="1.2" marker-end="url(#architecture-local-arrow)"/>
+        <path d="M 820,296 V 360 Q 820,368 812,368 H 776 Q 768,368 768,376 V 448 Q 768,456 760,456" fill="none" stroke="#63666a" stroke-width="1.2" marker-end="url(#architecture-local-arrow)"/>
+        <line x1="886" y1="296" x2="886" y2="424" stroke="#63666a" stroke-width="1.2" marker-end="url(#architecture-local-arrow)"/>
+        <path d="M 972,280 H 1008 Q 1016,280 1016,288 V 384 Q 1016,392 1024,392 H 1116 Q 1124,392 1124,400 V 424" fill="none" stroke="#63666a" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#architecture-local-arrow)"/>
+        <path d="M 620,232 V 184 Q 620,176 612,176 H 331 Q 323,176 323,184 V 232" fill="none" stroke="#004c93" stroke-width="1.2" marker-end="url(#architecture-local-arrow-link)"/>
+
+        <!-- Arrow labels sit on opaque paper masks with a visible gap from each connector. -->
+        <rect x="196" y="244" width="48" height="12" rx="2" fill="#fafaf7"/>
+        <text x="220" y="253" fill="#004c93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">MENSAJE</text>
+        <rect x="404" y="232" width="28" height="12" rx="2" fill="#fafaf7"/>
+        <text x="418" y="241" fill="#004c93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">POST</text>
+        <rect x="572" y="256" width="24" height="12" rx="2" fill="#fafaf7"/>
+        <text x="584" y="265" fill="#63666a" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">TLS</text>
+        <rect x="763" y="232" width="34" height="12" rx="2" fill="#fafaf7"/>
+        <text x="780" y="241" fill="#b54708" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">EVENT</text>
+        <rect x="998" y="244" width="24" height="12" rx="2" fill="#fafaf7"/>
+        <text x="1010" y="253" fill="#004c93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">LLM</text>
+        <rect x="688" y="340" width="44" height="12" rx="2" fill="#fafaf7"/>
+        <text x="710" y="349" fill="#63666a" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">INGEST</text>
+        <rect x="780" y="348" width="28" height="12" rx="2" fill="#fafaf7"/>
+        <text x="794" y="357" fill="#63666a" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">RAG</text>
+        <rect x="894" y="348" width="28" height="12" rx="2" fill="#fafaf7"/>
+        <text x="908" y="357" fill="#63666a" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">SQL</text>
+        <rect x="1050" y="372" width="44" height="12" rx="2" fill="#fafaf7"/>
+        <text x="1072" y="381" fill="#63666a" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">MEMORY</text>
+        <rect x="442" y="156" width="52" height="12" rx="2" fill="#fafaf7"/>
+        <text x="468" y="165" fill="#004c93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">SEND API</text>
+
+        <!-- Customer and Meta Cloud API. -->
+        <rect x="56" y="232" width="136" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="56" y="232" width="136" height="64" rx="6" fill="rgba(99,102,106,0.10)" stroke="#4b5563" stroke-width="1"/>
+        <rect x="64" y="240" width="32" height="12" rx="2" fill="transparent" stroke="rgba(75,85,99,0.45)" stroke-width="0.8"/>
+        <text x="80" y="249" fill="#4b5563" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">USER</text>
+        <text x="124" y="270" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">Cliente</text>
+        <text x="124" y="286" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">WhatsApp</text>
+
+        <rect x="248" y="232" width="150" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="248" y="232" width="150" height="64" rx="6" fill="rgba(26,26,26,0.03)" stroke="rgba(26,26,26,0.30)" stroke-width="1"/>
+        <rect x="256" y="240" width="36" height="12" rx="2" fill="transparent" stroke="rgba(26,26,26,0.40)" stroke-width="0.8"/>
+        <text x="274" y="249" fill="#1a1a1a" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">META</text>
+        <text x="323" y="270" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">WhatsApp Cloud API</text>
+        <text x="323" y="286" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">webhook · send API</text>
+
+        <!-- Local Docker services. -->
+        <rect x="436" y="232" width="132" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="436" y="232" width="132" height="64" rx="6" fill="#ffffff" stroke="#1a1a1a" stroke-width="1"/>
+        <rect x="444" y="240" width="44" height="12" rx="2" fill="transparent" stroke="rgba(26,26,26,0.40)" stroke-width="0.8"/>
+        <text x="466" y="249" fill="#1a1a1a" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">TUNNEL</text>
+        <text x="502" y="270" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">ngrok</text>
+        <text x="502" y="286" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">HTTPS · :8001</text>
+
+        <rect x="600" y="232" width="160" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="600" y="232" width="160" height="64" rx="6" fill="#ffffff" stroke="#1a1a1a" stroke-width="1"/>
+        <rect x="608" y="240" width="36" height="12" rx="2" fill="transparent" stroke="rgba(26,26,26,0.40)" stroke-width="0.8"/>
+        <text x="626" y="249" fill="#1a1a1a" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">API/UI</text>
+        <text x="680" y="266" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">Canales locales</text>
+        <text x="680" y="282" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Webhook :8001</text>
+        <text x="680" y="293" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Chainlit :8000</text>
+
+        <rect x="800" y="232" width="172" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="800" y="232" width="172" height="64" rx="6" fill="rgba(181,71,8,0.08)" stroke="#b54708" stroke-width="1.2"/>
+        <rect x="808" y="240" width="42" height="12" rx="2" fill="transparent" stroke="rgba(181,71,8,0.55)" stroke-width="0.8"/>
+        <text x="829" y="249" fill="#b54708" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">AGENT</text>
+        <text x="886" y="270" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">LangGraph runtime</text>
+        <text x="886" y="286" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">identity · cobranza · RAG</text>
+
+        <rect x="600" y="424" width="160" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="600" y="424" width="160" height="64" rx="6" fill="rgba(26,26,26,0.05)" stroke="#63666a" stroke-width="1"/>
+        <rect x="608" y="432" width="42" height="12" rx="2" fill="transparent" stroke="rgba(99,102,106,0.50)" stroke-width="0.8"/>
+        <text x="629" y="441" fill="#63666a" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">VECTOR</text>
+        <text x="680" y="462" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">Chroma</text>
+        <text x="680" y="478" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">páginas públicas · RAG</text>
+
+        <rect x="810" y="424" width="152" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="810" y="424" width="152" height="64" rx="6" fill="rgba(26,26,26,0.05)" stroke="#63666a" stroke-width="1"/>
+        <rect x="818" y="432" width="28" height="12" rx="2" fill="transparent" stroke="rgba(99,102,106,0.50)" stroke-width="0.8"/>
+        <text x="832" y="441" fill="#63666a" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">SQL</text>
+        <text x="886" y="462" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">SQLite + volumen</text>
+        <text x="886" y="478" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">clientes · chats · checkpoint</text>
+
+        <!-- Hosted providers. -->
+        <rect x="1048" y="232" width="152" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="1048" y="232" width="152" height="64" rx="6" fill="rgba(26,26,26,0.03)" stroke="rgba(26,26,26,0.30)" stroke-width="1"/>
+        <rect x="1056" y="240" width="32" height="12" rx="2" fill="transparent" stroke="rgba(26,26,26,0.40)" stroke-width="0.8"/>
+        <text x="1072" y="249" fill="#1a1a1a" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">LLM</text>
+        <text x="1124" y="270" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">Groq</text>
+        <text x="1124" y="286" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Qwen · Whisper · visión</text>
+
+        <rect x="1048" y="424" width="152" height="64" rx="6" fill="#fafaf7"/>
+        <rect x="1048" y="424" width="152" height="64" rx="6" fill="rgba(26,26,26,0.03)" stroke="rgba(26,26,26,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="1056" y="432" width="42" height="12" rx="2" fill="transparent" stroke="rgba(26,26,26,0.40)" stroke-width="0.8"/>
+        <text x="1077" y="441" fill="#1a1a1a" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">OPTIONAL</text>
+        <text x="1124" y="462" fill="#1a1a1a" font-size="12" font-weight="600" font-family="'Open Sans', Arial, sans-serif" text-anchor="middle">Qdrant Cloud</text>
+        <text x="1124" y="478" fill="#63666a" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">memoria no financiera</text>
+
+        <!-- Legend: local runtime, stores, provider calls, and optional memory path. -->
+        <line x1="40" y1="600" x2="1248" y2="600" stroke="rgba(26,26,26,0.12)" stroke-width="0.8"/>
+        <text x="40" y="621" fill="#63666a" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">CLAVE</text>
+        <rect x="112" y="612" width="14" height="10" rx="2" fill="rgba(181,71,8,0.08)" stroke="#b54708" stroke-width="1"/>
+        <text x="134" y="621" fill="#63666a" font-size="8.5" font-family="'Open Sans', Arial, sans-serif">Runtime</text>
+        <rect x="230" y="612" width="14" height="10" rx="2" fill="rgba(26,26,26,0.05)" stroke="#63666a" stroke-width="1"/>
+        <text x="252" y="621" fill="#63666a" font-size="8.5" font-family="'Open Sans', Arial, sans-serif">Datos locales</text>
+        <rect x="370" y="612" width="14" height="10" rx="2" fill="rgba(26,26,26,0.03)" stroke="rgba(26,26,26,0.30)" stroke-width="1"/>
+        <text x="392" y="621" fill="#63666a" font-size="8.5" font-family="'Open Sans', Arial, sans-serif">Servicio externo</text>
+        <line x1="540" y1="617" x2="572" y2="617" stroke="#004c93" stroke-width="1.2" marker-end="url(#architecture-local-arrow-link)"/>
+        <text x="582" y="621" fill="#63666a" font-size="8.5" font-family="'Open Sans', Arial, sans-serif">HTTP / API</text>
+        <line x1="704" y1="617" x2="736" y2="617" stroke="#63666a" stroke-width="1.2" marker-end="url(#architecture-local-arrow)"/>
+        <text x="746" y="621" fill="#63666a" font-size="8.5" font-family="'Open Sans', Arial, sans-serif">Lectura / escritura</text>
+        <line x1="940" y1="617" x2="972" y2="617" stroke="#63666a" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#architecture-local-arrow)"/>
+        <text x="982" y="621" fill="#63666a" font-size="8.5" font-family="'Open Sans', Arial, sans-serif">Dependencia opcional</text>
+      </svg>
+    </div>
+
+    <p class="receipt">Esta figura describe el modo local; no representa un despliegue activo en AWS. La identidad visual toma como referencia Liberty Networks (libertynetworks.com/es) y su hoja de estilos pública. La paleta usa fondo <code>#FAFAF7</code>, texto <code>#1A1A1A</code>, acento <code>#B54708</code> y enlaces <code>#004C93</code>; el naranja original se oscureció para alcanzar contraste legible. Encabezados: Arimo; texto: Open Sans; etiquetas técnicas: Geist Mono. Groq requiere <code>GROQ_API_KEY</code>; Qdrant se activa con <code>QDRANT_URL</code> y <code>QDRANT_API_KEY</code>.</p>
+  </main>
+</body>
+</html>

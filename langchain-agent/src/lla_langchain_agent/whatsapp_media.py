@@ -60,7 +60,7 @@ async def _download_media(media_id: str, *, expected_kind: str) -> tuple[bytes, 
     if not token:
         raise InboundMediaError("Falta configurar el token de WhatsApp para descargar el archivo.")
 
-    api_version = os.getenv("WHATSAPP_GRAPH_API_VERSION", "v23.0").strip()
+    api_version = os.getenv("WHATSAPP_GRAPH_API_VERSION", "v25.0").strip()
     headers = {"Authorization": f"Bearer {token}"}
     max_bytes = MAX_AUDIO_BYTES if expected_kind == "audio" else MAX_IMAGE_BYTES
     friendly_kind = "audio" if expected_kind == "audio" else "imagen"
