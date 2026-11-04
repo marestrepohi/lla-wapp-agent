@@ -1,4 +1,4 @@
-# Proyecto Ágil: collections agent prototype
+# Collections agent prototype
 
 Functional, channel-independent prototype for debt-management conversations. The local CLI,
 Chainlit, Telegram, and WhatsApp webhook send normalized events through one LangGraph runtime.
